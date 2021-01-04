@@ -91,7 +91,7 @@ function get_topstories(n::Int)
     response = HTTP.get(identifier)
     response_body = String(response.body)
     topstories_id_list = JSON.parse(response_body)
-    if length(topstories_id_list > n)
+    if length(topstories_id_list ) > n
         n = length(topstories_id_list)
     end
     topstories = map(get_story, topstories_id_list[1:n])
