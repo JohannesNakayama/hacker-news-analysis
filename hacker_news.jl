@@ -60,6 +60,21 @@ struct TopStoriesList
     itemlist::Array{Story}
     timestamp::Int
 end
+
+# TO DO:
+# ------ ACCOUNT FOR TIME DELAY FROM CALL
+# ------ ADD TIMEOUT
+function scrape_topstories(; top_n::Int, n_timeslices::Int, interval::Int)
+    df_list = []
+    for i in 1:n_timeslices
+        ts_df = log_topstories(top_n)
+        push!(df_list, deepcopy(ts_df))
+        @info "Logged one time slice. Sleeping for $interval seconds."
+        sleep(interval)
+    end
+    topstories = reduce(vcat, df_list)
+    return topstories
+end
                     
 # log topstories with timestamp of extraction time
 function log_topstories(n::Int)
@@ -76,11 +91,13 @@ function get_topstories(n::Int)
     response = HTTP.get(identifier)
     response_body = String(response.body)
     topstories_id_list = JSON.parse(response_body)
+    if length(topstories_id_list > n)
+        n = length(topstories_id_list)
+    end
     topstories = map(get_story, topstories_id_list[1:n])
     timestamp = Int(floor(Dates.datetime2unix(Dates.now(UTC))))
     return TopStoriesList(topstories, timestamp)
 end
-
 
 # get story from id (factory-like)
 function get_story(story_id::Int)
@@ -106,21 +123,6 @@ function get_story(story_id::Int)
     )     
 end
 
-
-# TO DO:
-# ------ ACCOUNT FOR TIME DELAY FROM CALL
-# ------ ADD TIMEOUT
-function scrape_topstories(; top_n::Int, n_timeslices::Int, interval::Int)
-    df_list = []
-    for i in 1:n_timeslices
-        ts_df = log_topstories(top_n)
-        push!(df_list, deepcopy(ts_df))
-        @info "Logged one time slice. Sleeping for $interval seconds."
-        sleep(interval)
-    end
-    topstories = reduce(vcat, df_list)
-    return topstories
-end
 
 test = scrape_topstories(top_n = 10, n_timeslices = 3, interval = 10)
 
