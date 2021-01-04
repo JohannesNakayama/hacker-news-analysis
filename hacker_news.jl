@@ -7,6 +7,7 @@ using JSON
 using HTTP
 using DataFrames
 using Dates
+using Feather
 
 # see an example story
 story_endpoint = "https://hacker-news.firebaseio.com/v0/item/25623858.json"
@@ -123,3 +124,9 @@ end
 
 test = scrape_topstories(top_n = 10, n_timeslices = 3, interval = 10)
 
+# scrape and write for preliminary analysis
+prelim_data = scrape_topstories(top_n = 500, n_timeslices = 60, interval = 60)
+if !("data" in readdir())
+    mkdir("data")
+end
+Feather.write(joinpath("data", "prelim_data.feather"), prelim_data)
