@@ -24,8 +24,8 @@ tss = unique(test["timestamp"])
 Dates.unix2datetime(tss[1])
 
 # scrape and write for preliminary analysis
-prelim_data = scrape_topstories(top_n = 500, n_timeslices = 60, interval = 5)
+prelim_data = HNScraper.scrape_topstories(top_n = 500, n_timeslices = 60, interval = 5)
 if !("data" in readdir())
     mkdir("data")
 end
-Feather.write(joinpath("data", "prelim_data.feather"), prelim_data)
+Feather.write(joinpath("data", "five_hours.feather"), prelim_data)
