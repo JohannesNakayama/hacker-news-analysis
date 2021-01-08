@@ -1,6 +1,6 @@
-# H1: ranking has a direct influence on voting
-# H2: influence of voting on ranking is not linear
-# H3: distribution of votes over time is sinoidal
+module HNScraper
+
+export scrape_topstories
 
 # libraries
 using JSON
@@ -8,15 +8,6 @@ using HTTP
 using DataFrames
 using Dates
 using Feather
-
-# see an example story
-story_endpoint = "https://hacker-news.firebaseio.com/v0/item/25623858.json"
-response = HTTP.get(story_endpoint)
-response_body = String(response.body)
-story = JSON.parse(response_body)
-for key in keys(story)
-    print(key, "\t", typeof(story[key]), "\n")
-end
 
 # data structure for a story
 struct Story 
@@ -61,16 +52,27 @@ struct TopStoriesList
     timestamp::Int
 end
 
-# TO DO:
-# ------ ACCOUNT FOR TIME DELAY FROM CALL
-# ------ ADD TIMEOUT
+# get top_n top stories from hacker news
 function scrape_topstories(; top_n::Int, n_timeslices::Int, interval::Int)
+    if interval < 1
+        interval = 1
+        @info "Minimum interval is 1 minute. Setting interval = 1."
+    end
     df_list = []
     for i in 1:n_timeslices
-        ts_df = log_topstories(top_n)
-        push!(df_list, deepcopy(ts_df))
-        @info "Logged one time slice. Sleeping for $interval seconds."
-        sleep(interval)
+        while true 
+            current_time = Dates.now()
+            if ((Dates.minute(current_time) % interval) != 0) || (Dates.second(current_time) != 0)
+                sleep(1)
+                print(".")
+            else
+                print("\nRequest at $current_time", "\n")
+                ts_df = log_topstories(top_n)
+                push!(df_list, deepcopy(ts_df))
+                break
+            end
+        end
+        @info "Logged one time slice."
     end
     topstories = reduce(vcat, df_list)
     return topstories
@@ -79,11 +81,14 @@ end
 # log topstories with timestamp of extraction time
 function log_topstories(n::Int)
     topstories = get_topstories(n)
+    n = length(topstories)
     topstories_df = DataFrames.DataFrame(topstories.itemlist)
     topstories_df[!, :timestamp] .= topstories.timestamp
     topstories_df[!, :rank_at_timestamp] = 1:n
     return topstories_df
 end
+
+Base.length(tsl::TopStoriesList) = length(tsl.itemlist)
 
 # get topstories 
 function get_topstories(n::Int) 
@@ -123,12 +128,6 @@ function get_story(story_id::Int)
     )     
 end
 
+end  # end module
 
-test = scrape_topstories(top_n = 10, n_timeslices = 3, interval = 10)
 
-# scrape and write for preliminary analysis
-prelim_data = scrape_topstories(top_n = 500, n_timeslices = 60, interval = 60)
-if !("data" in readdir())
-    mkdir("data")
-end
-Feather.write(joinpath("data", "prelim_data.feather"), prelim_data)

@@ -1,0 +1,143 @@
+---
+title: "Analysis"
+author: "Johannes Nakayama"
+date: "5 1 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(magrittr)
+```
+
+
+```{r}
+data <- arrow::read_feather(file.path("..", "data", "prelim_data.feather"))
+
+data %<>% 
+  mutate(story_id = as.factor(story_id),
+         creator_username = as.factor(creator_username),
+         # creation_time = as.numeric(creation_time),
+         title = as.character(title),
+         score = as.numeric(score),
+         comment_count = as.numeric(comment_count),
+         # timestamp = as.numeric(comment_count),
+         rank_at_timestamp = as.ordered(rank_at_timestamp))
+
+
+data %<>% 
+  mutate(relative_timestamp = timestamp - data$timestamp[1])
+```
+
+
+
+
+```{r}
+
+# actual time interval in minutes
+((data$timestamp %>% max()) - (data$timestamp %>% min())) / 60
+# suggests that naive solution (unsurprisingly) doesn't get data every minute
+# in fact, it takes about double the amount
+
+```
+
+
+```{r}
+
+data$timestamp %>% 
+  unique() %>% 
+  as.matrix() %>% 
+  diff() %>% 
+  as.data.frame() -> time_intervals
+
+time_intervals$index <- seq.int(nrow(time_intervals))
+names(time_intervals) <- c("diff", "pos")
+time_intervals %<>% select(pos, diff)
+
+time_intervals %>% 
+  ggplot(aes(x = pos, y = diff)) +
+  geom_line()
+
+
+```
+
+
+
+```{r}
+
+data %>% 
+  filter(story_id != -1) %>% 
+  select(story_id, score, timestamp) %>% 
+  ggplot(aes(x = timestamp, y = score, color = as.factor(story_id))) +
+  geom_line() +
+  theme(legend.position = "None")
+
+```
+
+
+
+# How much happens in about two hours?
+
+
+```{r}
+data %>% 
+  filter(story_id %in% data$story_id[1:10]) %>% 
+  ggplot(aes(x = timestamp, y = score, color = story_id)) +
+  geom_line()
+```
+
+
+
+
+
+```{r}
+
+data %>% 
+  select(story_id, timestamp, score) %>% 
+  group_by(story_id) %>% 
+  mutate(diff = score - lag(score)) %>% 
+  ungroup() %>% 
+  drop_na() -> score_changes
+
+score_changes %>% filter(diff >= 5) %>% select(story_id) %>% unlist() -> large_change_stories
+
+
+score_changes %>% 
+  filter(story_id %in% large_change_stories) %>% 
+  ggplot(aes(x = timestamp, y = score, color = story_id)) +
+  geom_line()
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
