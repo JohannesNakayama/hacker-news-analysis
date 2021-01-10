@@ -3,7 +3,6 @@ module HNScraper
     export scrape_topstories
     export get_topstories
 
-    # libraries
     using JSON
     using HTTP
     using DataFrames

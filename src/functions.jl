@@ -65,13 +65,14 @@ Base.length(tsl::TopStoriesList) = length(tsl.itemlist)
 
 # get topstories 
 function get_topstories() 
+    timestamp = Int(floor(Dates.datetime2unix(Dates.now(UTC))))
+
     identifier = "https://hacker-news.firebaseio.com/v0/topstories.json"
     response = HTTP.get(identifier)
     response_body = String(response.body)
     topstories_id_list = JSON.parse(response_body)
 
     topstories = map(get_story, topstories_id_list)
-    timestamp = Int(floor(Dates.datetime2unix(Dates.now(UTC))))
 
     return TopStoriesList(topstories, timestamp)
 end

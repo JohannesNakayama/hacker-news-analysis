@@ -1,136 +1,132 @@
 ---
-title: "Analysis"
+title: "Hacker News Analysis"
 author: "Johannes Nakayama"
-date: "5 1 2021"
-output: html_document
+date: "2021-01-09"
+output: 
+  prettydoc::html_pretty:
+    theme: tactile
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
 library(tidyverse)
 library(magrittr)
+library(ggpubr)
+source("helpers.R")
 ```
 
 
-```{r}
-data <- arrow::read_feather(file.path("..", "data", "prelim_data.feather"))
 
-data %<>% 
-  mutate(story_id = as.factor(story_id),
-         creator_username = as.factor(creator_username),
-         # creation_time = as.numeric(creation_time),
-         title = as.character(title),
+
+
+
+# Analysis of Required Sampling Rate
+
+For any analysis of Hacker News over a period of time, it is first important to know at which rate the stories need to be sampled. The following plot displays the top 10 stories from Hacker News over the period of one hour. As can be seen, The developments are not as volatile as to require a sampling rate of 2 or 4 minutes. Even with a six minute sampling rate, the developments are still depicted reasonably accurately. For the further analyses, I chose a sampling rate of 5 minutes.
+
+```{r}
+
+h1_data <- arrow::read_feather(file.path("..", "data", "h1_data.feather"))
+eda_data <- arrow::read_feather(file.path("..", "data", "eda_data.feather"))
+
+h1_data %<>% 
+  mutate(id = as.factor(id),
+         creation_time = as.POSIXct(creation_time, origin = "1970-01-01", tz = "UTC"), 
          score = as.numeric(score),
          comment_count = as.numeric(comment_count),
-         # timestamp = as.numeric(comment_count),
+         timestamp = as.POSIXct(timestamp, origin = "1970-01-01", tz = "UTC"),
          rank_at_timestamp = as.ordered(rank_at_timestamp))
 
+eda_data %<>% 
+  mutate(id = as.factor(id),
+         creation_time = as.POSIXct(creation_time, origin = "1970-01-01", tz = "UTC"), 
+         score = as.numeric(score),
+         comment_count = as.numeric(comment_count),
+         timestamp = as.POSIXct(timestamp, origin = "1970-01-01", tz = "UTC"),
+         rank_at_timestamp = as.ordered(rank_at_timestamp))
 
-data %<>% 
-  mutate(relative_timestamp = timestamp - data$timestamp[1])
-```
-
-
-
-
-```{r}
-
-# actual time interval in minutes
-((data$timestamp %>% max()) - (data$timestamp %>% min())) / 60
-# suggests that naive solution (unsurprisingly) doesn't get data every minute
-# in fact, it takes about double the amount
-
-```
-
-
-```{r}
-
-data$timestamp %>% 
-  unique() %>% 
-  as.matrix() %>% 
-  diff() %>% 
-  as.data.frame() -> time_intervals
-
-time_intervals$index <- seq.int(nrow(time_intervals))
-names(time_intervals) <- c("diff", "pos")
-time_intervals %<>% select(pos, diff)
-
-time_intervals %>% 
-  ggplot(aes(x = pos, y = diff)) +
-  geom_line()
-
-
-```
-
-
-
-```{r}
-
-data %>% 
-  filter(story_id != -1) %>% 
-  select(story_id, score, timestamp) %>% 
-  ggplot(aes(x = timestamp, y = score, color = as.factor(story_id))) +
-  geom_line() +
-  theme(legend.position = "None")
-
-```
-
-
-
-# How much happens in about two hours?
-
-
-```{r}
-data %>% 
-  filter(story_id %in% data$story_id[1:10]) %>% 
-  ggplot(aes(x = timestamp, y = score, color = story_id)) +
-  geom_line()
-```
-
-
-
-
-
-```{r}
-
-data %>% 
-  select(story_id, timestamp, score) %>% 
-  group_by(story_id) %>% 
-  mutate(diff = score - lag(score)) %>% 
+h1_data %>% 
+  group_by(timestamp) %>% 
+  summarize(timestamp = unique(timestamp)) %>%
   ungroup() %>% 
-  drop_na() -> score_changes
+  arrange(timestamp) -> timestamp_ordering
 
-score_changes %>% filter(diff >= 5) %>% select(story_id) %>% unlist() -> large_change_stories
+timestamp_ordering$ts_id <- 1:dim(timestamp_ordering)[1]
 
-
-score_changes %>% 
-  filter(story_id %in% large_change_stories) %>% 
-  ggplot(aes(x = timestamp, y = score, color = story_id)) +
-  geom_line()
-
-
+h1_data %<>% inner_join(timestamp_ordering, by = "timestamp")
 
 ```
 
 
 
 
+```{r, fig.height=4, fig.width=7, fig.align="center", out.width="100%", dpi=300}
+
+plot_details <- theme_hn() +
+  theme(legend.position = "None",
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+h1_data %>% 
+  filter(rank_at_timestamp <= 10) %>% 
+  ggplot(aes(x = timestamp, y = score, color = id)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("2 Minutes") +
+  plot_details +
+  theme(legend.position = "None",
+        plot.title = element_text(margin = margin(t = 10, b = 10))) -> p1
+
+h1_data %>% 
+  filter(rank_at_timestamp <= 10) %>% 
+  filter(ts_id %% 2 == 0) %>% 
+  ggplot(aes(x = timestamp, y = score, color = id)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("4 Minutes") +
+  plot_details +
+  theme(legend.position = "None",
+        plot.title = element_text(margin = margin(t = 10, b = 10))) -> p2
+
+h1_data %>% 
+  filter(rank_at_timestamp <= 10) %>% 
+  filter(ts_id %% 3 == 0) %>% 
+  ggplot(aes(x = timestamp, y = score, color = id)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("6 Minutes") +
+  plot_details +
+  theme(legend.position = "None",
+        plot.title = element_text(margin = margin(t = 10, b = 10))) -> p3
+
+ggarrange(p1, p2, p3, nrow = 1) %>% 
+  annotate_figure(top = text_grob(label = "Development of Top 10 Stories for Different Sampling Rates",
+                                  color = "grey20",
+                                  size = 15),
+                  left = text_grob(label = "Score",
+                                   color = "grey20",
+                                   rot = 90),
+                  bottom = text_grob(label = "Timestamp",
+                                     color = "grey20")) +
+  theme(plot.background = element_rect(color = "grey70", fill = "grey70", size = 1),
+        plot.margin = margin(15, 15, 15, 15)) +
+  NULL
+
+```
 
 
 
 
+# Preliminary Analysis of Five Hours
+
+
+```{r}
 
 
 
-
-
-
-
-
-
-
-
-
+```
 
 
 
