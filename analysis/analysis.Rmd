@@ -118,6 +118,15 @@ ggarrange(p1, p2, p3, nrow = 1) %>%
 
 
 
+Maximum age for top stories?
+All new stories in top stories?
+Minimum number of votes to make the top list
+
+-> Data to Github
+
+Longterm:
+* Stackoverflow
+
 
 # Preliminary Analysis of Five Hours
 
