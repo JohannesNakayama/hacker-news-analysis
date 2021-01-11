@@ -83,4 +83,28 @@ function get_story(story_id::Int)
     )
 end
 
+# get new stories (IDs) from hacker news (every `interval_minutes` for a total of `n_timeslices` iterations)
+function scrape_newstories(; n_timeslices::Int, interval_minutes::Int)
+    (interval_minutes >= 1) || throw(DomainError(interval_minutes, "sampling rate cannot be less than 1 minute"))
+    df_list = []
+    identifier = "https://hacker-news.firebaseio.com/v0/newstories.json"
+    for i in 1:n_timeslices
+        t = Timer(interval_minutes * 60)
+        timestamp = Dates.now(UTC)
+        response = HTTP.get(identifier)
+        response_body = String(response.body)
+        newstories = Array{Int64}(JSON.parse(response_body))
+        newstories_df = DataFrames.DataFrame(
+            story_id = newstories, timestamp = Dates.datetime2unix(timestamp), rank = 1:length(newstories)
+        )
+        # newstories_df[!, :timestamp] .= timestamp
+
+        push!(df_list, deepcopy(newstories_df))
+        @info "Logged new stories at $timestamp"
+        wait(t)
+    end
+    newstories = reduce(vcat, df_list)
+    return newstories
+end
+
 # POTENTIAL TO DO: subscribe to updates

@@ -133,7 +133,30 @@ Longterm:
 
 ```{r}
 
+newstories <- arrow::read_feather(file.path("..", "data", "hacker_news_newstories2.feather"))
 
+newstories %<>%
+  mutate(story_id = as.factor(story_id),
+         timestamp = as.POSIXct(timestamp, origin = "1970-01-01", tz = "UTC"),
+         rank = as.numeric(rank))
+
+newstories %>% 
+  filter(rank <= 50) -> newstories_toppage
+
+n_stories <- newstories_toppage$story_id %>% unique() %>% length()
+
+color_scheme <- viridis::viridis(n_stories)
+
+
+newstories_toppage %>% 
+  ggplot(aes(x = timestamp, y = rank, color = story_id, alpha = 30 - rank)) +
+  scale_color_manual(values = color_scheme) +
+  geom_point(size = 2) +
+  geom_line() +
+  scale_y_continuous(trans = "reverse") +
+  theme(legend.position = "None") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "red") +
+  theme_hn()
 
 ```
 
