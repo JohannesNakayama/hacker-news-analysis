@@ -26,3 +26,4 @@ Manifest.toml
 # Other data to ignore
 /data/
 .Rproj.user
+*.feather
