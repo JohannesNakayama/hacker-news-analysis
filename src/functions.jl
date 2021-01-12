@@ -26,20 +26,45 @@ struct TopStoriesList
 end
 
 # get top stories from hacker news (every `interval_minutes` for a total of `n_timeslices` iterations)
-function scrape_topstories(; n_timeslices::Int, interval_minutes::Int)
+function scrape_topstories(; n_timeslices::Int, interval_minutes::Int, base_filename::String)
     (interval_minutes >= 1) || throw(DomainError(interval_minutes, "sampling rate cannot be less than 1 minute"))
+    if !(".tmp" in readdir())
+        mkdir(".tmp")
+    end
     df_list = []
+    n = 0
     for i in 1:n_timeslices
         t = Timer(interval_minutes * 60)
         current_time = Dates.now()
         @info "Request at $current_time"
         ts_df = log_topstories()
         push!(df_list, deepcopy(ts_df))
+        if ((i % 5) == 0) || (i == n_timeslices)
+            n += 1
+            filename = base_filename * "_$n" * ".feather"
+            write_tmp_stories(df_list, filename)
+            df_list = []      
+        end
         @info "Logged time slice. Waiting for next request."
         wait(t)
     end
+    df = aggregate_data()
+    rm(".tmp", recursive = true)
+    return df
+end
+
+function write_tmp_stories(df_list, filename)
     topstories = reduce(vcat, df_list)
-    return topstories
+    Feather.write(joinpath(".tmp", filename), topstories)
+    @info "Saved current data and emptied cache."
+    return nothing
+end
+
+function aggregate_data()
+    filenames = joinpath.(".tmp", readdir(".tmp"))
+    df_list = asyncmap(Feather.read, filenames, ntasks = 20)
+    df = reduce(vcat, df_list)
+    return df
 end
                     
 # log topstories with timestamp of extraction time
