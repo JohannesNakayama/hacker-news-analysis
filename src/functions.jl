@@ -39,7 +39,7 @@ function scrape_topstories(; n_timeslices::Int, interval_minutes::Int, base_file
         @info "Request at $current_time"
         ts_df = log_topstories()
         push!(df_list, deepcopy(ts_df))
-        if ((i % 5) == 0) || (i == n_timeslices)
+        if ((i % 60) == 0) || (i == n_timeslices)
             n += 1
             filename = base_filename * "_$n" * ".feather"
             write_tmp_stories(df_list, filename)
