@@ -131,9 +131,9 @@ Longterm:
 # Preliminary Analysis of Five Hours
 
 
-```{r}
+```{r, fig.align="center", out.width="100%", dpi=300}
 
-newstories <- arrow::read_feather(file.path("..", "data", "hacker_news_newstories2.feather"))
+newstories <- arrow::read_feather(file.path("..", "data", "newstories.feather"))
 
 newstories %<>%
   mutate(story_id = as.factor(story_id),
@@ -145,20 +145,141 @@ newstories %>%
 
 n_stories <- newstories_toppage$story_id %>% unique() %>% length()
 
-color_scheme <- viridis::viridis(n_stories)
-
+color_scheme <- rep(c("black", "white"), n_stories)
 
 newstories_toppage %>% 
   ggplot(aes(x = timestamp, y = rank, color = story_id, alpha = 30 - rank)) +
   scale_color_manual(values = color_scheme) +
   geom_point(size = 2) +
-  geom_line() +
-  scale_y_continuous(trans = "reverse") +
+  geom_line(size = 1) +
+  scale_y_continuous(trans = "reverse", breaks = seq(50, 1, -5)) +
   theme(legend.position = "None") +
-  geom_hline(yintercept = 30, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "red", size = 2) +
+  theme_hn() +
+  theme(
+    panel.grid.minor.y = element_blank()
+  )
+
+ggsave("test.jpg", width=10, height=5)
+
+```
+
+
+
+
+```{r}
+
+topstories <- arrow::read_feather(file.path("..", "data", "topstories.feather"))
+topstories %<>% 
+  mutate(id = as.factor(id),
+         creation_time = lubridate::as_datetime(creation_time),
+         score = as.numeric(score),
+         comment_count = as.numeric(comment_count),
+         scrape_timestamp = lubridate::as_datetime(scrape_timestamp),
+         slice_timestamp = lubridate::as_datetime(slice_timestamp),
+         rank_at_timestamp = as.ordered(rank_at_timestamp))
+
+```
+
+
+```{r}
+# general metrics
+
+n_stories <- topstories$id %>% unique() %>% length()
+n_creators <- topstories$creator_username %>% unique() %>% length()
+
+
+
+```
+
+There are `r n_stories` stories by `r n_creators` different users in the data set.
+
+
+```{r}
+
+topstories %>% 
+  ggplot(aes(x = creation_time)) +
+  # geom_histogram() +
+  geom_density(color = "white", fill = "white", alpha = 0.5, size = 2) +
+  scale_x_datetime(date_breaks = "4 hours") +
+  theme_hn() +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+```{r}
+
+topstories %>% 
+  ggplot(aes(x = score)) +
+  geom_histogram(fill = "white") +
   theme_hn()
 
 ```
+
+
+
+Comment count (stories with more than 500 comments excluded)
+
+```{r}
+topstories %>% 
+  filter(comment_count < 500) %>% 
+  ggplot(aes(x = comment_count)) +
+  geom_histogram(binwidth = 10, fill = "white") +
+  theme_hn()
+```
+
+How do stories develop that have at some point reached rank 1?
+
+```{r}
+
+min_rank <- 160
+
+topstories %>% 
+  filter(rank_at_timestamp == 1) %>% 
+  select(id) %>% 
+  unique() -> rank_one_joiner
+
+color_scheme <- sample(viridis::magma(dim(rank_one_joiner)[1]))
+
+topstories %>% 
+  inner_join(rank_one_joiner, by = c("id")) %>% 
+  mutate(rank_at_timestamp = as.numeric(rank_at_timestamp)) %>% 
+  ggplot(aes(x = slice_timestamp, y = rank_at_timestamp, color = id)) +
+  geom_point(size = 0.2, alpha = 0.8) +
+  geom_line(size = 0.2, alpha = 0.6) +
+  scale_color_manual(values = color_scheme) +
+  scale_y_continuous(trans = "reverse", limits = c(min_rank, 1)) +
+  theme_hn() +
+  theme(legend.position = "None") +
+  NULL
+
+ggsave("topstory_development.jpg", width = 8, height = 4)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
