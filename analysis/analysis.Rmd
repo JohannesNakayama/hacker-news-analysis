@@ -1,6 +1,5 @@
 ---
 title: "Hacker News Analysis"
-author: "Johannes Nakayama"
 date: "2021-01-09"
 output: 
   prettydoc::html_pretty:
@@ -8,27 +7,28 @@ output:
 ---
 
 ```{r setup, include=FALSE}
+
+# defaults and libraries
 knitr::opts_chunk$set(echo = FALSE, message = FALSE)
 library(tidyverse)
 library(magrittr)
 library(ggpubr)
 source("helpers.R")
+
 ```
-
-
-
-
 
 
 # Analysis of Required Sampling Rate
 
 For any analysis of Hacker News over a period of time, it is first important to know at which rate the stories need to be sampled. The following plot displays the top 10 stories from Hacker News over the period of one hour. As can be seen, The developments are not as volatile as to require a sampling rate of 2 or 4 minutes. Even with a six minute sampling rate, the developments are still depicted reasonably accurately. For the further analyses, I chose a sampling rate of 5 minutes.
 
-```{r}
+```{r load-and-format-sampling-rate-data}
 
+# read data
 h1_data <- arrow::read_feather(file.path("..", "data", "h1_data.feather"))
 eda_data <- arrow::read_feather(file.path("..", "data", "eda_data.feather"))
 
+# format data
 h1_data %<>% 
   mutate(id = as.factor(id),
          creation_time = as.POSIXct(creation_time, origin = "1970-01-01", tz = "UTC"), 
@@ -45,6 +45,7 @@ eda_data %<>%
          timestamp = as.POSIXct(timestamp, origin = "1970-01-01", tz = "UTC"),
          rank_at_timestamp = as.ordered(rank_at_timestamp))
 
+# add timestamp id (ordered factor of timestamps)
 h1_data %>% 
   group_by(timestamp) %>% 
   summarize(timestamp = unique(timestamp)) %>%
@@ -57,11 +58,9 @@ h1_data %<>% inner_join(timestamp_ordering, by = "timestamp")
 
 ```
 
+```{r sampling-rate-plot, fig.height=4, fig.width=7, fig.align="center", out.width="100%", dpi=300}
 
-
-
-```{r, fig.height=4, fig.width=7, fig.align="center", out.width="100%", dpi=300}
-
+# generic styling
 plot_details <- theme_hn() +
   theme(legend.position = "None",
         panel.grid.minor.x = element_blank(),
@@ -69,6 +68,7 @@ plot_details <- theme_hn() +
         axis.title.x = element_blank(),
         axis.title.y = element_blank())
 
+# plot individual plots
 h1_data %>% 
   filter(rank_at_timestamp <= 10) %>% 
   ggplot(aes(x = timestamp, y = score, color = id)) +
@@ -76,7 +76,7 @@ h1_data %>%
   geom_line() +
   ggtitle("2 Minutes") +
   plot_details +
-  theme(legend.position = "None",
+  theme(legend.position = "None", 
         plot.title = element_text(margin = margin(t = 10, b = 10))) -> p1
 
 h1_data %>% 
@@ -101,6 +101,7 @@ h1_data %>%
   theme(legend.position = "None",
         plot.title = element_text(margin = margin(t = 10, b = 10))) -> p3
 
+# arrange in one plot
 ggarrange(p1, p2, p3, nrow = 1) %>% 
   annotate_figure(top = text_grob(label = "Development of Top 10 Stories for Different Sampling Rates",
                                   color = "grey20",
@@ -117,36 +118,29 @@ ggarrange(p1, p2, p3, nrow = 1) %>%
 ```
 
 
+# What Happens on the `new` Page?
 
-Maximum age for top stories?
-All new stories in top stories?
-Minimum number of votes to make the top list
+Presumably, the `new` page on Hacker News is the only way for newly created stories to gain traction. Hence, it is important to have a look at how large this window of opportunity is. It might just be, that stories that do not get traction on this page are just never considered by the community. 
 
--> Data to Github
+```{r load-newstories-data}
 
-Longterm:
-* Stackoverflow
-
-
-# Preliminary Analysis of Five Hours
-
-
-```{r, fig.align="center", out.width="100%", dpi=300}
-
+# load new stories data
 newstories <- arrow::read_feather(file.path("..", "data", "newstories.feather"))
-
 newstories %<>%
   mutate(story_id = as.factor(story_id),
          timestamp = as.POSIXct(timestamp, origin = "1970-01-01", tz = "UTC"),
          rank = as.numeric(rank))
 
-newstories %>% 
-  filter(rank <= 50) -> newstories_toppage
+```
 
+```{r plot-newstories-data, fig.align="center", out.width="100%", dpi=300}
+
+# only consider ranks below 50
+newstories %>% filter(rank <= 50) -> newstories_toppage
 n_stories <- newstories_toppage$story_id %>% unique() %>% length()
-
 color_scheme <- rep(c("black", "white"), n_stories)
 
+# plot development of the "new" page
 newstories_toppage %>% 
   ggplot(aes(x = timestamp, y = rank, color = story_id, alpha = 30 - rank)) +
   scale_color_manual(values = color_scheme) +
@@ -155,20 +149,23 @@ newstories_toppage %>%
   scale_y_continuous(trans = "reverse", breaks = seq(50, 1, -5)) +
   theme(legend.position = "None") +
   geom_hline(yintercept = 30, linetype = "dashed", color = "red", size = 2) +
+  labs(title = "Development of \"New\" Page",
+       x = "Timestamp",
+       y = "Rank") +
   theme_hn() +
-  theme(
-    panel.grid.minor.y = element_blank()
-  )
-
-ggsave("test.jpg", width=10, height=5)
+  theme(plot.margin = margin(15, 15, 15, 15),
+        panel.grid.minor.y = element_blank())
 
 ```
 
 
+# The `top stories` Page
 
 
-```{r}
 
+```{r load-and-format-top-story-data}
+
+# load topstories data
 topstories <- arrow::read_feather(file.path("..", "data", "topstories.feather"))
 topstories %<>% 
   mutate(id = as.factor(id),
@@ -182,80 +179,106 @@ topstories %<>%
 ```
 
 
-```{r}
-# general metrics
+```{r topstories-general-metrics}
 
+# general metrics
 n_stories <- topstories$id %>% unique() %>% length()
 n_creators <- topstories$creator_username %>% unique() %>% length()
-
-
+time_interval <- (max(topstories$scrape_timestamp) - min(topstories$scrape_timestamp)) %>% as.numeric()
 
 ```
 
 There are `r n_stories` stories by `r n_creators` different users in the data set.
+The data set covers a range of `r time_interval %>% round(2) %>% format(2)` in intervals of two minutes.
 
-
-```{r}
+```{r topstories-delays}
 
 topstories %>% 
-  ggplot(aes(x = creation_time)) +
-  # geom_histogram() +
-  geom_density(color = "white", fill = "white", alpha = 0.5, size = 2) +
-  scale_x_datetime(date_breaks = "4 hours") +
-  theme_hn() +
-  theme(axis.text.x = element_text(angle = 90))
+  group_by(slice_timestamp) %>% 
+  summarize(scraping_delay = max(scrape_timestamp) - min(scrape_timestamp)) -> delay_data
+
+mean_delay <- delay_data$scraping_delay %>% mean() %>% as.numeric()
+median_delay <- delay_data$scraping_delay %>% median() %>% as.numeric()
+sd_delay <- delay_data$scraping_delay %>% sd()
+max_delay <- delay_data$scraping_delay %>% max() %>% as.numeric()
 
 ```
 
+Even though all topstories cannot be scraped at exactly the same time, there are only minor time delays in the scraping process, with a mean of `r mean_delay %>% round(2) %>% format(2)` seconds, a median of `r median_delay %>% round(2) %>% format(2)` seconds, and a standard deviation of `r sd_delay %>% round(2) %>% format(2)` seconds. The maximum delay was `r max_delay %>% round(2) %>% format(2)` seconds which is in an acceptable range.
 
+```{r plot-scraping-delays, fig.align="center", out.width="100%", dpi=300}
 
-```{r}
+delay_data %>% 
+  ggplot(aes(x = scraping_delay)) +
+  geom_histogram(fill = "white", alpha = 0.7) +
+  labs(title = "Delays after the Intended Time Slice",
+       x = "Scraping Delay",
+       y = "Count") +
+  theme_hn() +
+  theme(plot.margin = margin(15, 15, 15, 15))
+
+```
+
+Scores and comment counts seem to be exponentially distributed as could be expected. Note that posts with more than 500 comments were excluded in the lower plot because of some extreme outliers that would have made the visual analysis of the remaining data difficult.
+
+```{r plot-score-distribution, fig.align="center", out.width="100%", dpi=300}
 
 topstories %>% 
   ggplot(aes(x = score)) +
-  geom_histogram(fill = "white") +
-  theme_hn()
+  geom_histogram(fill = "white", alpha = 0.7) +
+  labs(title = "Distribution of Scores (Overall)",
+       x = "Score",
+       y = "Count") +
+  theme_hn() +
+  theme(plot.margin = margin(15, 15, 15, 15))
 
 ```
 
-
-
-Comment count (stories with more than 500 comments excluded)
-
-```{r}
+```{r plot-comment-count-distribution, fig.align="center", out.width="100%", dpi=300}
 topstories %>% 
   filter(comment_count < 500) %>% 
   ggplot(aes(x = comment_count)) +
-  geom_histogram(binwidth = 10, fill = "white") +
-  theme_hn()
+  geom_histogram(binwidth = 10, fill = "white", alpha = 0.7) +
+  labs(title = "Distribution of Number of Comments (Overall)",
+       x = "Number of Comments",
+       y = "Count") +
+  theme_hn() +
+  theme(plot.margin = margin(15, 15, 15, 15))
+
 ```
 
-How do stories develop that have at some point reached rank 1?
 
-```{r}
+## How Do Stories Develop that have at Some Point Reached Rank 1?
 
+```{r rank-one-stories, fig.align="center", out.width="100%", dpi=300}
+
+# up to which rank?
 min_rank <- 160
 
+# find ids of all stories that at some point reached rank 1
 topstories %>% 
   filter(rank_at_timestamp == 1) %>% 
   select(id) %>% 
   unique() -> rank_one_joiner
 
+# create a color scheme for maximum distinguishability
 color_scheme <- sample(viridis::magma(dim(rank_one_joiner)[1]))
 
+# plot data
 topstories %>% 
   inner_join(rank_one_joiner, by = c("id")) %>% 
   mutate(rank_at_timestamp = as.numeric(rank_at_timestamp)) %>% 
   ggplot(aes(x = slice_timestamp, y = rank_at_timestamp, color = id)) +
-  geom_point(size = 0.2, alpha = 0.8) +
-  geom_line(size = 0.2, alpha = 0.6) +
+  geom_line(size = 0.6, alpha = 0.6) +
   scale_color_manual(values = color_scheme) +
   scale_y_continuous(trans = "reverse", limits = c(min_rank, 1)) +
+  labs(title = "Development of Stories that Reached Rank 1",
+       x = "Slice Timestamp",
+       y = "Rank") +
   theme_hn() +
-  theme(legend.position = "None") +
+  theme(plot.margin = margin(15, 15, 15, 15), 
+        legend.position = "None") +
   NULL
-
-ggsave("topstory_development.jpg", width = 8, height = 4)
 
 ```
 
@@ -269,6 +292,17 @@ ggsave("topstory_development.jpg", width = 8, height = 4)
 
 
 
+# Remaining Questions
+
+
+Maximum age for top stories?
+All new stories in top stories?
+Minimum number of votes to make the top list
+
+-> Data to Github
+
+Longterm:
+* Stackoverflow
 
 
 

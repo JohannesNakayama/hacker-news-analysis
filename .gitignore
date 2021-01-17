@@ -27,3 +27,5 @@ Manifest.toml
 /data/
 .Rproj.user
 *.feather
+*.png
+*.html
