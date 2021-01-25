@@ -1,6 +1,6 @@
 ---
 title: "Hacker News Analysis"
-date: "2021-01-09"
+date: "2021-01-18"
 output: 
   prettydoc::html_pretty:
     theme: tactile
@@ -120,7 +120,7 @@ ggarrange(p1, p2, p3, nrow = 1) %>%
 
 # What Happens on the `new` Page?
 
-Presumably, the `new` page on Hacker News is the only way for newly created stories to gain traction. Hence, it is important to have a look at how large this window of opportunity is. It might just be, that stories that do not get traction on this page are just never considered by the community. 
+Presumably, the `new` page on Hacker News is the only way for newly created stories to gain traction. Hence, it is important to have a look at how large this window of opportunity is. 
 
 ```{r load-newstories-data}
 
@@ -144,7 +144,7 @@ color_scheme <- rep(c("black", "white"), n_stories)
 newstories_toppage %>% 
   ggplot(aes(x = timestamp, y = rank, color = story_id, alpha = 30 - rank)) +
   scale_color_manual(values = color_scheme) +
-  geom_point(size = 2) +
+  geom_point(size = 1) +
   geom_line(size = 1) +
   scale_y_continuous(trans = "reverse", breaks = seq(50, 1, -5)) +
   theme(legend.position = "None") +
@@ -159,6 +159,12 @@ newstories_toppage %>%
 ```
 
 
+How many votes on new page?
+
+
+Follow a sample of stories from the new page -> how do they develop? 
+Do they get any upvotes after disappearing from the new page?
+
 # The `top stories` Page
 
 
@@ -168,13 +174,13 @@ newstories_toppage %>%
 # load topstories data
 topstories <- arrow::read_feather(file.path("..", "data", "topstories.feather"))
 topstories %<>% 
-  mutate(id = as.factor(id),
-         creation_time = lubridate::as_datetime(creation_time),
+  mutate(creation_time = lubridate::as_datetime(creation_time),
          score = as.numeric(score),
          comment_count = as.numeric(comment_count),
          scrape_timestamp = lubridate::as_datetime(scrape_timestamp),
          slice_timestamp = lubridate::as_datetime(slice_timestamp),
-         rank_at_timestamp = as.ordered(rank_at_timestamp))
+         rank_at_timestamp = as.numeric(rank_at_timestamp),
+         age = as.numeric(scrape_timestamp - creation_time) / 3600)
 
 ```
 
@@ -247,6 +253,8 @@ topstories %>%
 
 ```
 
+fit exponential distributions
+
 
 ## How Do Stories Develop that have at Some Point Reached Rank 1?
 
@@ -268,17 +276,283 @@ color_scheme <- sample(viridis::magma(dim(rank_one_joiner)[1]))
 topstories %>% 
   inner_join(rank_one_joiner, by = c("id")) %>% 
   mutate(rank_at_timestamp = as.numeric(rank_at_timestamp)) %>% 
-  ggplot(aes(x = slice_timestamp, y = rank_at_timestamp, color = id)) +
-  geom_line(size = 0.6, alpha = 0.6) +
+  ggplot(aes(x = slice_timestamp, y = rank_at_timestamp)) +
+  geom_line(aes(alpha = log(score)), size = 0.6) +
   scale_color_manual(values = color_scheme) +
   scale_y_continuous(trans = "reverse", limits = c(min_rank, 1)) +
   labs(title = "Development of Stories that Reached Rank 1",
        x = "Slice Timestamp",
        y = "Rank") +
+  facet_wrap(. ~id) +
   theme_hn() +
-  theme(plot.margin = margin(15, 15, 15, 15), 
+  theme(plot.margin = margin(15, 15, 15, 15),
         legend.position = "None") +
   NULL
+
+```
+
+```{r rank-one-stories, fig.align="center", out.width="100%", dpi=300}
+
+# up to which rank?
+min_rank <- 160
+
+# find ids of all stories that at some point reached rank 1
+topstories %>% 
+  filter(rank_at_timestamp == 1) %>% 
+  select(id) %>% 
+  unique() -> rank_one_joiner
+
+# create a color scheme for maximum distinguishability
+color_scheme <- sample(viridis::magma(dim(rank_one_joiner)[1]))
+
+# plot data
+topstories %>% 
+  inner_join(rank_one_joiner, by = c("id")) %>% 
+  mutate(rank_at_timestamp = as.numeric(rank_at_timestamp)) %>% 
+  ggplot(aes(x = slice_timestamp, y = score, color = id)) +
+  geom_line(size = 0.6, alpha = 0.6) +
+  scale_color_manual(values = color_scheme) +
+  # scale_y_continuous(trans = "reverse", limits = c(min_rank, 1)) +
+  labs(title = "Development of Stories that Reached Rank 1",
+       x = "Slice Timestamp",
+       y = "Rank") +
+  theme_hn() +
+  # facet_wrap(. ~ id) +
+  # theme(plot.margin = margin(15, 15, 15, 15), 
+  #       legend.position = "None") +
+  NULL
+
+```
+
+
+
+```{r}
+
+topstories %>% 
+  filter(id == "25761068") %>% 
+  select(slice_timestamp, rank_at_timestamp, score) %>% 
+  arrange(slice_timestamp)
+
+
+topstories %>% 
+  filter(id == "25761068") %>% 
+  ggplot(aes(x = score, y = rank_at_timestamp)) +
+  geom_point()
+
+
+
+
+
+```
+
+
+
+```{r}
+
+topstories %<>% mutate(age = as.numeric(scrape_timestamp - creation_time) / 3600)
+
+topstories %>% 
+  filter(score <= 3) %>% 
+  select(id) %>% 
+  unique() %>% 
+  sample_n(40) -> small_score_ids
+
+topstories %>% 
+  inner_join(small_score_ids, by = "id") %>% 
+  ggplot(aes(x = age, y = rank_at_timestamp, color = as.factor(id), alpha = score)) +
+  scale_y_continuous(trans = "reverse") +
+  geom_line() +
+  theme(legend.position = "None")
+
+```
+
+
+
+
+# Maximum Age for Top Stories
+
+```{r}
+
+df <- data.frame()
+
+for (n in c(1, 10, 30, 100)) {
+  df %<>% 
+    rbind(
+      topstories %>% 
+        filter(rank_at_timestamp <= n) %>% 
+        select(age) %>% 
+        mutate(top_n = n)       
+    )
+}
+
+df %>% 
+  ggplot(aes(x = age, color = as.factor(top_n))) +
+  geom_boxplot() +
+  coord_flip()
+
+
+```
+
+
+
+
+# Remaining Questions
+
+
+  * Maximum age for top stories?  
+  * All new stories in top stories?  
+  * Minimum number of votes to make the top list  
+  * How frequently do the strange jumps occur?
+  * Is the new page really the window of opportunity? Does occurring on the new page impact the later success of the story?
+  
+Are there statistics about page visits? -> moderators
+How many votes are casted on the new / top page?
+
+
+
+Validation:
+
+  * simulate and compare
+
+
+Goal:
+
+View on what happens that is transferrable between real data and simulated data
+
+
+Longterm:
+
+  * Stackoverflow
+
+
+
+
+scrape new and top stories in parallel
+fix bug that makes program get stuck
+Zwischenstände speichern und einfach laufen lassen
+
+
+
+
+
+
+
+
+```{r}
+
+data <- read.table(file.path("..", "data", "hn-data.tsv"), sep = "\t", header = TRUE)
+
+data$rank %<>% as.numeric()
+
+data %<>% mutate(age = sample_time - submission_time)
+
+```
+
+
+```{r}
+
+
+data %>% 
+  filter(age < 360) %>% 
+  select(id) %>% 
+  unique() -> id_selector
+
+
+get_sample <- function(data, id_selector, n) {
+  data %>% 
+    inner_join(id_selector %>% sample_n(n), by = "id")   
+}
+
+
+data_sample <- data %>% 
+    inner_join(head(id_selector, 1000), by = "id")  
+
+
+data_sample %>% 
+  ggplot(aes(x = as.numeric(sample_time), y = as.numeric(rank), color = as.factor(id))) +
+  geom_line() +
+  scale_y_continuous(trans = "reverse") +
+  scale_x_continuous(breaks = seq(min(data_sample$sample_time), max(data_sample$sample_time), by = 3600)) +
+  coord_flip() +
+  theme(legend.position = "None",
+        axis.text.x = element_text(angle = 90))
+
+data_sample %>% 
+  filter((sample_time > 1611491037) & (sample_time < 1611523437)) %>% 
+  ggplot(aes(x = as.numeric(sample_time), y = as.numeric(rank), color = as.factor(id))) +
+  geom_line() +
+  scale_y_continuous(trans = "reverse") +
+  scale_x_continuous(breaks = seq(min(data_sample$sample_time), max(data_sample$sample_time), by = 3600)) +
+  coord_flip() +
+  theme(legend.position = "None",
+        axis.text.x = element_text(angle = 90))
+
+dir.create("graphics")
+ggsave(file.path("graphics", "time_vs_rank.png"))
+
+data %>% 
+  inner_join(id_selector %>% sample_n(50), by = "id") %>% 
+  ggplot(aes(x = as.numeric(sample_time), y = as.numeric(score), color = as.factor(id))) +
+  geom_line() +
+  scale_y_log10() +
+  # scale_y_continuous(trans = "reverse") +
+  theme(legend.position = "None")
+
+```
+
+
+Zeitplots von verschiedenen Metriken/Statistiken -> korrelieren Ereignisse? 
+
+Aufkommen von New Stories
+Score
+Rank
+Age
+
+Top 10 (20, 30, ...) -> Relation Rank / Score?
+plot Scores als Labels
+
+Zeit gegen Score -> andere Farbe wenn über gewissen Rank
+Rank nach Farbe
+
+
+```{r}
+
+
+data_sample <- data %>% inner_join(head(id_selector, 50), by = "id")  
+
+data_sample <- get_sample(data, id_selector, 5)
+
+data_sample %>% 
+  ggplot(aes(x = sample_time, y = score, color = rank, group = id)) +
+  geom_jitter(alpha = 0.3, width = 1.5) +
+  # geom_line() +
+  scale_y_log10() +
+  # scale_color_continuous(type = grDevices::rainbow(500))
+  # scale_color_gradient(low = "blue", high = "red") +
+  scale_color_gradientn(colours = rainbow(10))
+  NULL
+
+```
+
+
+
+```{r}
+
+data %>% 
+  inner_join(id_selector %>% sample_n(50), by = "id") %>% 
+  ggplot(aes(x = as.numeric(score), y = as.numeric(rank), color = as.factor(id))) +
+  geom_line() +
+  scale_y_continuous(trans = "reverse") +
+  theme(legend.position = "None")
+
+```
+
+
+```{r}
+
+single_story <- get_sample(data, id_selector, 1)
+
+max(single_story$rank)
 
 ```
 
@@ -292,17 +566,22 @@ topstories %>%
 
 
 
-# Remaining Questions
 
 
-Maximum age for top stories?
-All new stories in top stories?
-Minimum number of votes to make the top list
 
--> Data to Github
 
-Longterm:
-* Stackoverflow
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

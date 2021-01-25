@@ -1,0 +1,143 @@
+---
+title: "Hacker News Analysis"
+date: "2021-01-18"
+output: 
+  prettydoc::html_pretty:
+    theme: tactile
+---
+
+```{r setup, include=FALSE}
+
+# defaults and libraries
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+library(tidyverse)
+library(magrittr)
+library(ggpubr)
+source("helpers.R")
+
+```
+
+
+
+```{r}
+
+data <- read.table(file.path("..", "data", "hn-data.tsv"), sep = "\t", header = TRUE)
+data$rank %<>% as.numeric()
+data %<>% 
+  mutate(age = sample_time - submission_time,
+         sample_time_POSIX = as.POSIXct(sample_time, origin = "1970-01-01", tz = "CET"),
+         submission_time_POSIX = as.POSIXct(submission_time, origin = "1970-01-01", tz = "CET"))
+
+
+```
+
+```{r, message=TRUE}
+
+get_id_selector <- function(data) {
+  data %>% 
+    filter(age < 120) %>% 
+    select(id) %>% 
+    unique() -> id_selector  
+  return(id_selector)
+}
+
+# subset the data by a random sample of IDs
+get_random_sample <- function(data, n) {
+  id_selector <- get_id_selector(data)
+  if (dim(id_selector)[1] < n) {
+    stop("n is too large")
+  }
+  data %>% inner_join(id_selector %>% sample_n(n), by = "id")   
+}
+
+# subset the data by the first n IDs that occurred 
+get_first_n <- function(data, n) {
+  id_selector <- get_id_selector(data)
+  if (dim(id_selector)[1] < n) {
+    stop("n is too large")
+  }
+  data_sample <- data %>% inner_join(head(id_selector, n), by = "id")  
+  return(data_sample)
+}
+
+```
+
+```{r, message=TRUE}
+
+get_first_n(data, 100)
+get_random_sample(data, 100)
+
+```
+
+
+
+```{r}
+
+d <- lubridate::as_datetime(data$submission_time_POSIX[1])
+
+extract_clock_time <- function(datetime_vec) {
+  extract_element <- function(x) {
+    glue::glue("{lubridate::hour(x)}{lubridate::minute(x)}{lubridate::second(x)}")
+  }
+  map(datetime_vec, 
+      extract_element)
+}
+
+data %>% mutate(a = extract_clock_time(submission_time_POSIX))
+
+data %>% 
+  ggplot(aes(x = submission_time_POSIX)) +
+  geom_density(color = "white", fill = "white", alpha = 0.5) +
+  theme_hn()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
