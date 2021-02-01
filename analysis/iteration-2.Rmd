@@ -19,19 +19,37 @@ source("helpers.R")
 
 
 
-```{r}
+```{r read-data}
 
-data <- read.table(file.path("..", "data", "hn-data.tsv"), sep = "\t", header = TRUE)
-data$rank %<>% as.numeric()
-data %<>% 
-  mutate(age = sample_time - submission_time,
-         sample_time_POSIX = as.POSIXct(sample_time, origin = "1970-01-01", tz = "CET"),
-         submission_time_POSIX = as.POSIXct(submission_time, origin = "1970-01-01", tz = "CET"))
-
+if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
+  data <- read.table(file.path("..", "data", "hn-data-2.tsv"), sep = "\t", header = TRUE)
+  data %<>% 
+    mutate(rank = as.numeric(rank),
+           age = sample_time - submission_time) %>% 
+    mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
+           samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
+    mutate(subtime_y = lubridate::year(subtime_datetime),
+           subtime_m = lubridate::month(subtime_datetime),
+           subtime_d = lubridate::day(subtime_datetime),
+           subtime_h = lubridate::hour(subtime_datetime),
+           subtime_m = lubridate::minute(subtime_datetime),
+           subtime_s = lubridate::second(subtime_datetime),
+           samptime_y = lubridate::year(samptime_datetime),
+           samptime_m = lubridate::month(samptime_datetime),
+           samptime_d = lubridate::day(samptime_datetime),
+           samptime_h = lubridate::hour(samptime_datetime),
+           samptime_m = lubridate::minute(samptime_datetime),
+           samptime_s = lubridate::second(samptime_datetime)) %>%
+    mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
+    select(-c(submission_time, sample_time))
+  write_rds(data, file.path("..", "data", "hn-data-processed.rds"), compress = "gz")  
+} else {
+  data <- read_rds(file.path("..", "data", "hn-data-processed.rds"))  
+}
 
 ```
 
-```{r, message=TRUE}
+```{r helper-functions}
 
 get_id_selector <- function(data) {
   data %>% 
@@ -70,38 +88,78 @@ get_random_sample(data, 100)
 ```
 
 
+# Distribution of Submissions over Time
+
+
+Over the entire sample space
 
 ```{r}
 
-d <- lubridate::as_datetime(data$submission_time_POSIX[1])
-
-extract_clock_time <- function(datetime_vec) {
-  extract_element <- function(x) {
-    glue::glue("{lubridate::hour(x)}{lubridate::minute(x)}{lubridate::second(x)}")
-  }
-  map(datetime_vec, 
-      extract_element)
-}
-
-data %>% mutate(a = extract_clock_time(submission_time_POSIX))
-
 data %>% 
-  ggplot(aes(x = submission_time_POSIX)) +
+  ggplot(aes(x = subtime_datetime)) +
   geom_density(color = "white", fill = "white", alpha = 0.5) +
   theme_hn()
 
 ```
 
 
+By time of day
+
+```{r}
+
+data %>% 
+  ggplot(aes(x = subtime_clocktime)) +
+  geom_density(color = "white", fill = "white", alpha = 0.5) +
+  theme_hn()
+
+```
+
+
+# Distribution of Ages on the Top Page
+
+
+```{r}
+
+
+data %>% 
+  filter(!is.na(rank)) %>% 
+  filter(rank <= 30) %>% 
+  ggplot(aes(x = age / 60 / 60)) +
+  geom_histogram(fill = "white", alpha = 0.5) +
+  theme_hn()
 
 
 
 
+```
+
+```{r}
+
+# TODO: ANIMATE DISTRIBUTION OF TOPPAGE AGES OVER TIME
+
+```
 
 
+ Oldest story on the Top Page
 
+```{r}
 
+get_max_age <- function(data, max_rank) {
+  data %>% 
+    filter(!is.na(rank)) %>% 
+    filter(rank <= max_rank) %>% 
+    mutate(age_hours = age / 60 / 60) %>% 
+    select(age_hours) %>% 
+    max()  
+}
 
+get_max_age(data, 30)
+get_max_age(data, 100)
+get_max_age(data, 500)
+
+```
+
+Hard cut-off after 48 hours? Or scraping specification?
 
 
 
