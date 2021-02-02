@@ -440,11 +440,22 @@ Zwischenstände speichern und einfach laufen lassen
 
 ```{r}
 
-data <- read.table(file.path("..", "data", "hn-data.tsv"), sep = "\t", header = TRUE)
+data <- read.table(file.path("..", "data", "hn-data-3.tsv"), sep = "\t", header = TRUE)
 
 data$rank %<>% as.numeric()
 
 data %<>% mutate(age = sample_time - submission_time)
+
+data %>% 
+  filter(age < 360) %>% 
+  select(id) %>% 
+  unique() -> id_selector
+
+
+get_sample <- function(data, id_selector, n) {
+  data %>% 
+    inner_join(id_selector %>% sample_n(n), by = "id")   
+}
 
 ```
 
@@ -501,6 +512,28 @@ data %>%
 ```
 
 
+
+```{r}
+
+
+
+data_sample <- data %>% 
+    inner_join(head(id_selector, 1000), by = "id")  
+
+
+data_sample %>% 
+  ggplot(aes(x = as.numeric(sample_time), y = as.numeric(rank), color = as.factor(id))) +
+  geom_line() +
+  scale_y_continuous(trans = "reverse") +
+  scale_x_continuous(breaks = seq(min(data_sample$sample_time), max(data_sample$sample_time), by = 3600)) +
+  coord_flip() +
+  theme(legend.position = "None",
+        axis.text.x = element_text(angle = 90))
+```
+
+
+
+
 Zeitplots von verschiedenen Metriken/Statistiken -> korrelieren Ereignisse? 
 
 Aufkommen von New Stories
@@ -518,19 +551,31 @@ Rank nach Farbe
 ```{r}
 
 
-data_sample <- data %>% inner_join(head(id_selector, 50), by = "id")  
+# data_sample <- data %>% inner_join(head(id_selector, 50), by = "id")  
 
-data_sample <- get_sample(data, id_selector, 5)
+data %<>% 
+  mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
+         samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET"))
+
+data_sample <- get_sample(data, id_selector, 50)
 
 data_sample %>% 
-  ggplot(aes(x = sample_time, y = score, color = rank, group = id)) +
-  geom_jitter(alpha = 0.3, width = 1.5) +
-  # geom_line() +
+  ggplot(aes(x = samptime_datetime, y = score, color = rank, group = id)) +
+  geom_line(size = 1, alpha = 0.7) +
   scale_y_log10() +
-  # scale_color_continuous(type = grDevices::rainbow(500))
-  # scale_color_gradient(low = "blue", high = "red") +
-  scale_color_gradientn(colours = rainbow(10))
+  scale_x_datetime(date_breaks = "1 day") +
+  scale_color_gradientn(colours = viridis::viridis(10), trans = "reverse") +
+  labs(title = "Scores and Ranks over Time",
+       x = "Sample Timestamp",
+       y = "Score",
+       color = "Rank") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 0.95, vjust = 1),
+        panel.border = element_rect(color = "lightgrey")) +
   NULL
+
+
+ggsave(filename = file.path("graphics", "scores_ranks_time.pdf"), width = 8, height = 4, dpi = "retina")
 
 ```
 

@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE)
 library(tidyverse)
 library(magrittr)
 library(ggpubr)
+library(gganimate)
 source("helpers.R")
 
 ```
@@ -21,27 +22,29 @@ source("helpers.R")
 
 ```{r read-data}
 
+# if processed data is not in data folder: process, save and load
+# else: load processed data
 if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
   data <- read.table(file.path("..", "data", "hn-data-2.tsv"), sep = "\t", header = TRUE)
   data %<>% 
-    mutate(rank = as.numeric(rank),
-           age = sample_time - submission_time) %>% 
-    mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
-           samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
-    mutate(subtime_y = lubridate::year(subtime_datetime),
-           subtime_m = lubridate::month(subtime_datetime),
-           subtime_d = lubridate::day(subtime_datetime),
-           subtime_h = lubridate::hour(subtime_datetime),
-           subtime_m = lubridate::minute(subtime_datetime),
-           subtime_s = lubridate::second(subtime_datetime),
-           samptime_y = lubridate::year(samptime_datetime),
-           samptime_m = lubridate::month(samptime_datetime),
-           samptime_d = lubridate::day(samptime_datetime),
-           samptime_h = lubridate::hour(samptime_datetime),
-           samptime_m = lubridate::minute(samptime_datetime),
-           samptime_s = lubridate::second(samptime_datetime)) %>%
-    mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
-    select(-c(submission_time, sample_time))
+    dplyr::mutate(rank = as.numeric(rank),
+                  age = sample_time - submission_time) %>% 
+    dplyr::mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
+                  samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
+    dplyr::mutate(subtime_y = lubridate::year(subtime_datetime),
+                  subtime_m = lubridate::month(subtime_datetime),
+                  subtime_d = lubridate::day(subtime_datetime),
+                  subtime_h = lubridate::hour(subtime_datetime),
+                  subtime_m = lubridate::minute(subtime_datetime),
+                  subtime_s = lubridate::second(subtime_datetime),
+                  samptime_y = lubridate::year(samptime_datetime),
+                  samptime_m = lubridate::month(samptime_datetime),
+                  samptime_d = lubridate::day(samptime_datetime),
+                  samptime_h = lubridate::hour(samptime_datetime),
+                  samptime_m = lubridate::minute(samptime_datetime),
+                  samptime_s = lubridate::second(samptime_datetime)) %>%
+    dplyr::mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
+    dplyr::select(-c(submission_time, sample_time))
   write_rds(data, file.path("..", "data", "hn-data-processed.rds"), compress = "gz")  
 } else {
   data <- read_rds(file.path("..", "data", "hn-data-processed.rds"))  
@@ -49,8 +52,21 @@ if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
 
 ```
 
+```{r anonymization}
+
+# for publication: replace id column with this anonymous id column (via inner_join)
+data %>% 
+  dplyr::select(id) %>% 
+  unique() %>% 
+  arrange(id) %>% 
+  cbind(anon_id = seq(1, dim(id_set)[1], by = 1)) -> id_set
+
+
+```
+
 ```{r helper-functions}
 
+# return data frame with IDs of new stories during scraping
 get_id_selector <- function(data) {
   data %>% 
     filter(age < 120) %>% 
@@ -82,6 +98,7 @@ get_first_n <- function(data, n) {
 
 ```{r, message=TRUE}
 
+# test functions
 get_first_n(data, 100)
 get_random_sample(data, 100)
 
@@ -135,12 +152,27 @@ data %>%
 
 ```{r}
 
-# TODO: ANIMATE DISTRIBUTION OF TOPPAGE AGES OVER TIME
+# plot distributions of ages on toppage
+data %>% 
+  filter(!is.na(rank)) %>% 
+  filter(rank <= 30) %>% 
+  ggplot(aes(x = age / 60 / 60)) +
+  geom_histogram(fill = "white", alpha = 0.5) +
+  theme_hn() -> p
+
+# add animation
+p +
+  transition_states(samptime_d, 
+                    transition_length = 1, 
+                    state_length = 1) -> anim
+
+# render/show animation
+# anim
 
 ```
 
 
- Oldest story on the Top Page
+Oldest story on the Top Page
 
 ```{r}
 
@@ -159,7 +191,67 @@ get_max_age(data, 500)
 
 ```
 
-Hard cut-off after 48 hours? Or scraping specification?
+My suspicion is that there is a hard cut-off after 48 hours, i.e., stories that are older than 48 hours are removed from the top page. An alternative hypothesis is that this exact 48 hours value is due to the way the scraper works.
+
+
+
+# How do stories develop on the `New` page?
+
+
+Fitting a Poisson distribution to the arrival frequencies.
+
+```{r}
+
+# compute for every 1 minute timeslice how many new stories are posted
+data.frame(subtime = sorted_submission_times$subtime_datetime, 
+           bin = cut(sorted_submission_times$subtime_datetime, breaks = "1 min", labels = FALSE)) %>% 
+  mutate(bin = factor(bin, levels = seq(1, max(bin), by = 1))) %>% 
+  group_by(bin, .drop = FALSE) %>% 
+  summarize(arr_count = n()) -> arrival_counts
+
+# show real distribution of arrival times
+arrival_counts %>% 
+  ggplot(aes(x = arr_count)) +
+  geom_bar() +
+  ylim(c(0, 4000))
+
+# show simulated distribution of arrival times
+data.frame(V = rpois(6717, mean(arrival_counts$arr_count))) %>% 
+  ggplot(aes(x = V)) +
+  geom_bar() +
+  ylim(c(0, 4000))
+
+```
+
+In the preceding plots, you can see that we can simulate the arrival rate of new posts very accurately with a simple fitted Poisson distribution. 
+
+
+
+The next plot shows how the scores of stories develops while they are on the new page.
+
+```{r}
+
+data %>% 
+  dplyr::select(id, score, rank, subtime_datetime, samptime_datetime) %>%
+  dplyr::rename(rank_toppage = rank) %>% 
+  dplyr::mutate(samptime_coarse = update(samptime_datetime, second = 0)) %>% 
+  dplyr::group_by(samptime_coarse) %>%
+  dplyr::slice_max(n = 30, order_by = subtime_datetime) %>% 
+  dplyr::mutate(rank_newpage = dplyr::row_number()) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::arrange(samptime_coarse) %>% 
+  dplyr::mutate(on_toppage = !is.na(rank_toppage)) -> newpage_moving_window
+  
+
+newpage_moving_window %>%
+  ggplot(aes(x = rank_newpage, y = score, group = id, color = on_toppage)) +
+  geom_line(alpha = 0.8)
+
+
+```
+
+
+
 
 
 
