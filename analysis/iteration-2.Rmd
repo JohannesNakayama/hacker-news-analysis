@@ -34,26 +34,28 @@ source("helpers.R")
 # if processed data is not in data folder: process, save and load
 # else: load processed data
 if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
-  data <- read.table(file.path("..", "data", "hn-data-2.tsv"), sep = "\t", header = TRUE)
+  data <- read.table(file.path("..", "data", "newstories_2021-01-26_14-32-18.tsv"), sep = "\t", header = TRUE)
   data %<>% 
-    dplyr::mutate(rank = as.numeric(rank),
-                  age = sample_time - submission_time) %>% 
-    dplyr::mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
+    mutate(rank = as.numeric(rank),
+           age_seconds = sample_time - submission_time) %>% 
+    mutate(age_hours = age_seconds / 60 / 60) %>% 
+    rename(rank_toppage = rank) %>% 
+    mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
                   samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
-    dplyr::mutate(subtime_y = lubridate::year(subtime_datetime),
-                  subtime_m = lubridate::month(subtime_datetime),
-                  subtime_d = lubridate::day(subtime_datetime),
-                  subtime_h = lubridate::hour(subtime_datetime),
-                  subtime_m = lubridate::minute(subtime_datetime),
-                  subtime_s = lubridate::second(subtime_datetime),
-                  samptime_y = lubridate::year(samptime_datetime),
-                  samptime_m = lubridate::month(samptime_datetime),
-                  samptime_d = lubridate::day(samptime_datetime),
-                  samptime_h = lubridate::hour(samptime_datetime),
-                  samptime_m = lubridate::minute(samptime_datetime),
-                  samptime_s = lubridate::second(samptime_datetime)) %>%
-    dplyr::mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
-    dplyr::select(-c(submission_time, sample_time))
+    # dplyr::mutate(subtime_y = lubridate::year(subtime_datetime),
+    #               subtime_m = lubridate::month(subtime_datetime),
+    #               subtime_d = lubridate::day(subtime_datetime),
+    #               subtime_h = lubridate::hour(subtime_datetime),
+    #               subtime_m = lubridate::minute(subtime_datetime),
+    #               subtime_s = lubridate::second(subtime_datetime),
+    #               samptime_y = lubridate::year(samptime_datetime),
+    #               samptime_m = lubridate::month(samptime_datetime),
+    #               samptime_d = lubridate::day(samptime_datetime),
+    #               samptime_h = lubridate::hour(samptime_datetime),
+    #               samptime_m = lubridate::minute(samptime_datetime),
+    #               samptime_s = lubridate::second(samptime_datetime)) %>%
+    mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
+    select(-c(submission_time, sample_time))
   readr::write_rds(data, file.path("..", "data", "hn-data-processed.rds"), compress = "gz")  
 } else {
   data <- readr::read_rds(file.path("..", "data", "hn-data-processed.rds"))  
@@ -65,10 +67,10 @@ if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
 
 # for publication: replace id column with this anonymous id column (via inner_join)
 data %>% 
-  dplyr::select(id) %>% 
+  select(id) %>% 
   unique() %>% 
-  dplyr::arrange(id) %>% 
-  dplyr::mutate(anon_id = dplyr::row_number()) -> id_set
+  arrange(id) %>% 
+  mutate(anon_id = row_number()) -> id_set
 
 ```
 
@@ -77,8 +79,9 @@ data %>%
 # return data frame with IDs of new stories during scraping
 get_id_selector <- function(data) {
   data %>% 
+    # TODO: DECIDE WHAT TO DO ABOUT STORIES THAT WERE ALREADY THERE
     # dplyr::filter(age < 120) %>% 
-    dplyr::select(id) %>% 
+    select(id) %>% 
     unique() -> id_selector  
   return(id_selector)
 }
@@ -89,7 +92,7 @@ get_random_sample <- function(data, n) {
   if (dim(id_selector)[1] < n) {
     stop("n is too large")
   }
-  data %>% dplyr::inner_join(dplyr::sample_n(id_selector, n), by = "id") -> random_sample
+  data %>% inner_join(sample_n(id_selector, n), by = "id") -> random_sample
   return(random_sample)
 }
 
@@ -108,8 +111,8 @@ get_first_n <- function(data, n) {
 ```{r, message=TRUE}
 
 # test functions
-get_first_n(data, 100)
-get_random_sample(data, 100)
+data %>% get_first_n(100)
+data %>% get_random_sample(100)
 
 ```
 
@@ -124,149 +127,109 @@ get_random_sample(data, 100)
 # Distribution of Submissions over Time
 
 
-Over the entire sample space
+During the entire timeframe of our sampling, a clear regularity in terms of posting volume can be observed. 
 
-```{r}
+```{r kde-posting-volume-datetime}
 
 data %>% 
   ggplot(aes(x = subtime_datetime)) +
-  geom_density(color = "white", fill = "white", alpha = 0.5) +
-  theme_hn()
+  geom_density(color = "black", fill = "black", alpha = 0.5, size = 1) +
+  labs(title = "KDE of Posting Volume",
+       x = "Submission Time",
+       y = "KDE",
+       caption = "The red dashed line indicates the start of the sampling.") +
+  geom_vline(xintercept = min(data$samptime_datetime), size = 1, linetype = "dashed", color = "red") +
+  theme_hn() +
+  theme(axis.text.y = element_blank())
 
 ```
 
 
-By time of day
+Looking into this pattern, we can see that (from the perspective of Central European Time) there is low traffic in the early morning, then it picks up and increases until it reaches its peak at around 6 pm.
 
-```{r}
+```{r kde-posting-volume-time}
 
 data %>% 
   ggplot(aes(x = subtime_clocktime)) +
-  geom_density(color = "white", fill = "white", alpha = 0.5) +
-  theme_hn()
+  geom_density(color = "black", fill = "black", alpha = 0.5, size = 1) +
+  labs(title = "KDE of Posting Volume by Time of Day",
+       x = "Time of day",
+       y = "KDE",
+       caption = "The displayed times are in CET.") +
+  scale_x_datetime(date_labels = "%H:%M:%S") +
+  theme_hn() +
+  theme(axis.text.y = element_blank())
 
 ```
 
 
+Lastly, we can look into how the arrival rates of new stories are distributed. The obvious hypothesis would be to assume a Poisson distribution.
 
-
-
-
-
-
-
-# Distribution of Ages on the Top Page
-
-
-```{r}
-
+```{r format-data-for-submission-times}
+# get IDs and submission times and sort them by temporally
 data %>% 
-  filter(!is.na(rank)) %>% 
-  filter(rank <= 30) %>% 
-  ggplot(aes(x = age / 60 / 60)) +
-  geom_histogram(fill = "white", alpha = 0.5) +
-  theme_hn()
+  select(id, subtime_datetime) %>% 
+  unique() %>% 
+  arrange(subtime_datetime) %>% 
+  select(subtime_datetime) -> sorted_submission_times
 
-```
-
-```{r, eval=FALSE}
-
-# plot distributions of ages on toppage
-data %>% 
-  filter(!is.na(rank)) %>% 
-  filter(rank <= 30) %>% 
-  ggplot(aes(x = age / 60 / 60)) +
-  geom_histogram(fill = "white", alpha = 0.5) +
-  theme_hn() -> p
-
-# add animation
-p +
-  transition_states(samptime_d, 
-                    transition_length = 1, 
-                    state_length = 1) -> anim
-
-# render/show animation
-# anim
-
+# compute for every 1 minute timeslice how many new stories are posted
+tibble(subtime = sorted_submission_times$subtime_datetime, 
+       bin = cut(sorted_submission_times$subtime_datetime, 
+                 breaks = "1 min", 
+                 labels = FALSE)) %>% 
+  mutate(bin = factor(bin, levels = seq(1, max(bin), by = 1))) %>% 
+  group_by(bin, .drop = FALSE) %>% 
+  summarize(arr_count = n()) -> arrival_counts
 ```
 
 
-Oldest story on the Top Page
-
-```{r}
-
-# get maximum age of story up to specified rank
-get_max_age <- function(max_rank, data) {
-  data %>% 
-    filter(!is.na(rank)) %>% 
-    filter(rank <= max_rank) %>% 
-    mutate(age_hours = age / 60 / 60) %>% 
-    select(age_hours) %>% 
-    max()  
-}
-
-# compute max age up to rank for 1:500
-max_age_by_rank <- tibble(up_to_rank = seq(1, 500, by = 1),
-                          max_age = sapply(seq(1, 500, by = 1), FUN = get_max_age, data = data))  # takes long to compute...
-
-# plot max age by rank
-max_age_by_rank %>% 
-  ggplot(aes(x = up_to_rank, y = max_age)) +
-  geom_line() +
-  ylim(c(0, 48))
-
-```
-
-My suspicion is that there is a hard cut-off after 48 hours, i.e., stories that are older than 48 hours are removed from the top page. An alternative hypothesis is that this exact 48 hours value is due to the way the scraper works.
 
 
+```{r plot-submission-times-distributions}
+# generics
+y_max <- 7000
+rate_max <- 7
 
-Minimum score to make it to the top page.
+# show real distribution of arrival times
+p1 <- arrival_counts %>% 
+  ggplot(aes(x = arr_count)) +
+  geom_bar(color = "transparent", fill = "black", alpha = 0.8) +
+  ylim(c(0, y_max)) +
+  scale_x_continuous(breaks = seq(0, 7, by = 1), limits = c(-0.5, rate_max + 0.5)) +
+  labs(title = "Distribution of Arrival Rate per Minute (Empirical)",
+       x = "Arrival Rate",
+       y = "Count") +
+  coord_flip() +
+  theme_hn() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank())
 
-```{r}
+# simulate this process
+set.seed(1)
+n <- dim(arrival_counts)[1]
+lambda <- mean(arrival_counts$arr_count)
+simulated_distribution <- tibble(arr_count = rpois(n, lambda))
 
-data %>% 
-  select(id, score, rank, samptime_datetime) %>% 
-  filter(!is.na(rank)) %>% 
-  dplyr::mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
-  group_by(score) %>% 
-  summarize(count = n()) %>% 
-  ungroup() -> top_page_scores
+# show simulated distribution of arrival times
+p2 <- simulated_distribution %>% 
+  ggplot(aes(x = arr_count)) +
+  geom_bar(color = "transparent", fill = "black", alpha = 0.8) +
+  ylim(c(0, y_max)) +
+  scale_x_continuous(breaks = seq(0, 7, by = 1), limits = c(-0.5, rate_max + 0.5)) +
+  labs(title = "Distribution of Arrival Rate per Minute (Simulated)",
+       x = "Arrival Rate",
+       y = "Count")  +
+  coord_flip() +
+  theme_hn() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank())
 
-
-top_page_scores
-
-top_page_scores %>% 
-  filter(score <= 10) %>% 
-  ggplot(aes(x = score, y = count)) +
-  geom_bar(stat = "identity") +
-  scale_x_continuous(breaks = seq(1, 10, by = 1)) +
-  theme(panel.grid.minor.x = element_blank())
-
-
-top_page_scores %>% 
-  filter((score > 10) & (score <= 100)) %>% 
-  ggplot(aes(x = score, y = count)) +
-  geom_bar(stat = "identity") +
-  scale_x_continuous(breaks = seq(10, 100, by = 10)) +
-  theme(panel.grid.minor.x = element_blank())
-
-top_page_scores %>% 
-  filter((score > 100) & (score <= 1000)) %>% 
-  ggplot(aes(x = score, y = count)) +
-  geom_bar(stat = "identity") +
-  scale_x_continuous(breaks = seq(100, 1000, by = 100)) +
-  theme(panel.grid.minor.x = element_blank())
+ggpubr::ggarrange(p1, p2, ncol = 1)
 
 ```
 
-There is a significant amount of stories with score 1 that make it to the top page. After that, the distribution becomes somewhat strange. There are areas of density and areas where there are no stories at all.
-
-
-
-
-
-
+As can be seen, arrival rates can be simulated with this fitted Poisson process very accurately. If we can determine the user behavior equally well, we can find a good mapping between real-world time and simulation time.
 
 
 
@@ -275,63 +238,77 @@ There is a significant amount of stories with score 1 that make it to the top pa
 # How do stories develop on the `New` page?
 
 
-Fitting a Poisson distribution to the arrival frequencies.
-
-```{r}
-
-data %>% 
-  dplyr::select(id, subtime_datetime) %>% 
-  unique() %>% 
-  dplyr::arrange(subtime_datetime) %>% 
-  dplyr::select(subtime_datetime) -> sorted_submission_times
-
-# compute for every 1 minute timeslice how many new stories are posted
-tibble::tibble(subtime = sorted_submission_times$subtime_datetime, 
-               bin = cut(sorted_submission_times$subtime_datetime, breaks = "1 min", labels = FALSE)) %>% 
-  dplyr::mutate(bin = factor(bin, levels = seq(1, max(bin), by = 1))) %>% 
-  dplyr::group_by(bin, .drop = FALSE) %>% 
-  dplyr::summarize(arr_count = n()) -> arrival_counts
-
-# show real distribution of arrival times
-arrival_counts %>% 
-  ggplot(aes(x = arr_count)) +
-  geom_bar() +
-  ylim(c(0, 4000))
-
-# show simulated distribution of arrival times
-data.frame(V = rpois(6717, mean(arrival_counts$arr_count))) %>% 
-  ggplot(aes(x = V)) +
-  geom_bar() +
-  ylim(c(0, 4000))
-
-```
-
-In the preceding plots, you can see that we can simulate the arrival rate of new posts very accurately with a simple fitted Poisson distribution. 
 
 
 
 The next plot shows how the scores of stories develops while they are on the new page.
 
 ```{r, eval=FALSE}
-
 data %>% 
-  dplyr::select(id, score, rank, subtime_datetime, samptime_datetime) %>%
-  dplyr::rename(rank_toppage = rank) %>% 
-  dplyr::mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
-  dplyr::group_by(samptime_coarse) %>%
-  dplyr::slice_max(n = 30, order_by = subtime_datetime) %>%
-  dplyr::mutate(rank_newpage = dplyr::row_number()) %>% 
-  dplyr::ungroup() %>% 
-  dplyr::arrange(samptime_coarse) %>% 
-  dplyr::mutate(on_toppage = !is.na(rank_toppage)) -> newpage_moving_window
-  
-
-newpage_moving_window %>%
-  ggplot2::ggplot(aes(x = rank_newpage, y = score, group = id, color = on_toppage)) +
-  ggplot2::geom_line(alpha = 0.8)
-
-
+  select(id, age_seconds, score, rank_toppage, subtime_datetime, samptime_datetime) %>%
+  mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
+  group_by(samptime_coarse) %>%
+  slice_max(n = 200, order_by = subtime_datetime) %>%
+  mutate(rank_newpage = row_number()) %>% 
+  ungroup() %>% 
+  arrange(samptime_coarse) %>% 
+  mutate(on_toppage = !is.na(rank_toppage)) -> newpage_moving_window
 ```
+
+
+TODO: ANALYSE HOW MANY VOTES STORIES GET BEFORE THEY GET TO THE FRONT PAGE (AGGREGATE OVER ALL STORIES ON THE NEW PAGE).
+
+```{r, eval=FALSE}
+color_scheme <- c("FALSE" = "darkgrey", "TRUE" = "red")
+set.seed(123)
+newpage_moving_window %>% 
+  get_random_sample(100) %>% 
+  ggplot(aes(x = rank_newpage, y = score, group = id, color = on_toppage)) +
+  geom_jitter(alpha = 0.1, height = 0.05) +
+  scale_x_continuous(trans = "reverse") +
+  scale_color_manual(values = color_scheme) +
+  labs(title = "How do stories emerge from the new page to the top page?",
+       x = "Newpage Rank",
+       y = "Score", 
+       color = "On Toppage") +
+  coord_flip() +
+  theme_hn() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+```
+
+```{r}
+
+color_scheme <- c("FALSE" = "darkgrey", "TRUE" = "red")
+
+set.seed(123)
+
+newpage_moving_window %>% 
+  get_random_sample(100) %>% 
+  filter(age_seconds <= 50000) %>%
+  ggplot(aes(x = age_seconds / 3600, y = score, group = id, color = on_toppage)) +
+  # geom_jitter(alpha = 0.2, height = 0.05) +
+  geom_point(alpha = 0.2) +
+  scale_color_manual(values = color_scheme) +
+  # scale_x_continuous(trans = "reverse") +
+  scale_y_log10() +
+  theme_hn() +
+  NULL
+```
+
+```{r}
+
+# TODO: COMPUTE HOW MANY VOTES STORIES GET WHEN THEY ARE NOT ON THE TOP PAGE
+
+newpage_moving_window %>% 
+  group_by(id) %>% 
+  slice(if(any(on_toppage == FALSE)) 1:which.max(on_toppage == FALSE) else row_number())
+  
+  
+```
+
+
 
 
 
@@ -386,7 +363,7 @@ Some stories seem to be deleted after some time, resulting in a score NA (see ta
 
 ```{r}
 data %>% 
-  dplyr::select(id, score, rank, subtime_datetime, samptime_datetime) %>%
+  dplyr::select(id, score, rank_toppage, subtime_datetime, samptime_datetime) %>%
   dplyr::rename(rank_toppage = rank) %>% 
   dplyr::mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
   dplyr::group_by(samptime_coarse) %>%
@@ -496,17 +473,17 @@ after_new_page %>%
 ```{r}
 
 data %>% 
-  filter(!is.na(rank)) %>% 
+  filter(!is.na(rank_toppage)) %>% 
   select(id) %>% 
   unique() -> top_story_achievers
 
 data %>% 
-  filter(rank <= 100) %>% 
+  filter(rank_toppage <= 100) %>% 
   select(id) %>% 
   unique() -> top_100_achievers
 
 data %>% 
-  filter(rank <= 30) %>% 
+  filter(rank_toppage <= 30) %>% 
   select(id) %>% 
   unique() -> top_30_achievers
 
@@ -523,6 +500,175 @@ percentage_top_story_achievers
 percentage_top_100_achievers
 percentage_top_30_achievers
 ```
+
+
+
+
+
+# Distribution of Ages on the Top Page
+
+
+```{r}
+max_age_top_page <- data %>% 
+  filter(!is.na(rank_toppage)) %>% 
+  select(age_hours) %>% 
+  max() / 24
+  
+```
+
+
+
+
+Next, we will present the distribution of the ages on the top page. First of all, the distribution of ages on the top page in general does not reveal anything surprising: There are few *very* new stories on the top page, then there seems to be an optimal age, where stories have gathered enough votes, but are not yet so old that the age penalty pushes them out of the top page. For higher ages, the number of stories declines rapidly and there are only very few stories that are older than a few days. In fact, the oldest story on the top page in the entire data set is `r max_age_top_page` days old.
+
+```{r}
+data %>% 
+  filter(!is.na(rank_toppage)) %>% 
+  ggplot(aes(x = age_hours)) +
+  geom_histogram(fill = "black", alpha = 0.5) +
+  scale_y_continuous(labels = c("0", "10k", "20k", "30k", "40k")) +
+  labs(title = "Distribution of Ages of Stories in the Top 500",
+       x = "Age [Hours]",
+       y = "Count") +
+  theme_hn() 
+```
+
+
+For stories on the front page of the top list, this effect is -- also unsurprisingly -- even more extreme.
+
+```{r}
+
+data %>% 
+  filter(!is.na(rank_toppage)) %>%  
+  filter(rank_toppage <= 30) %>% 
+  ggplot(aes(x = age_hours)) +
+  geom_histogram(fill = "black", alpha = 0.5) +
+  scale_y_continuous(labels = c("0", "20k", "40k", "60k")) +
+  labs(title = "Distribution of Ages of Stories in the Top 30",
+       x = "Age [Hours]",
+       y = "Count") +
+  theme_hn() 
+
+```
+
+Please note that this is an aggregation over all top lists over all sample times. 
+
+
+```{r, eval=FALSE}
+
+# TODO: IS THIS ANIMATION REALLY NECESSARY?
+# plot distributions of ages on toppage
+data %>% 
+  filter(!is.na(rank_toppage)) %>% 
+  filter(rank_toppage <= 30) %>% 
+  ggplot(aes(x = age / 60 / 60)) +
+  geom_histogram(fill = "white", alpha = 0.5) +
+  theme_hn() -> p
+
+# add animation
+p +
+  transition_states(samptime_d, 
+                    transition_length = 1, 
+                    state_length = 1) -> anim
+
+# render/show animation
+# anim
+
+```
+
+
+Oldest story on the Top Page
+
+```{r}
+# get maximum age of story up to specified rank
+get_max_age <- function(max_rank, data) {
+  data %>% 
+    filter(!is.na(rank_toppage)) %>% 
+    filter(rank_toppage <= max_rank) %>%
+    select(age_hours) %>% 
+    max()  
+}
+
+# compute max age up to rank for 1:500
+max_age_by_rank <- tibble(up_to_rank = seq(1, 500, by = 1),
+                          max_age = sapply(seq(1, 500, by = 1), FUN = get_max_age, data = data))  # takes long to compute...
+
+max_age_by_rank %>% knitr::kable()
+```
+
+
+```{r}
+# plot max age by rank
+max_age_by_rank %>% 
+  ggplot(aes(x = up_to_rank, y = max_age)) +
+  geom_line(size = 1) +
+  scale_x_log10() +
+  labs(title = "Oldest Story to ever make it to Specific Rank",
+       x = "Rank",
+       y = "Age of Oldest Story [Hours]") +
+  theme_hn()
+
+```
+
+
+
+
+
+
+
+
+Minimum score to make it to the top page.
+
+```{r}
+
+data %>% 
+  select(id, score, rank_toppage, samptime_datetime) %>% 
+  filter(!is.na(rank_toppage)) %>% 
+  dplyr::mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
+  group_by(score) %>% 
+  summarize(count = n()) %>% 
+  ungroup() -> top_page_scores
+
+
+top_page_scores
+
+top_page_scores %>% 
+  filter(score <= 10) %>% 
+  ggplot(aes(x = score, y = count)) +
+  geom_bar(stat = "identity") +
+  scale_x_continuous(breaks = seq(1, 10, by = 1)) +
+  theme(panel.grid.minor.x = element_blank())
+
+
+top_page_scores %>% 
+  filter((score > 10) & (score <= 100)) %>% 
+  ggplot(aes(x = score, y = count)) +
+  geom_bar(stat = "identity") +
+  scale_x_continuous(breaks = seq(10, 100, by = 10)) +
+  theme(panel.grid.minor.x = element_blank())
+
+top_page_scores %>% 
+  filter((score > 100) & (score <= 1000)) %>% 
+  ggplot(aes(x = score, y = count)) +
+  geom_bar(stat = "identity") +
+  scale_x_continuous(breaks = seq(100, 1000, by = 100)) +
+  theme(panel.grid.minor.x = element_blank())
+
+```
+
+There is a significant amount of stories with score 1 that make it to the top page. After that, the distribution becomes somewhat strange. There are areas of density and areas where there are no stories at all.
+
+
+
+
+
+
+
+
+
+
+
+
 
 About 22.7 % of all stories make it to the top page.
 
