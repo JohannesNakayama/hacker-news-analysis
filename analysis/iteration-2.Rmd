@@ -5,8 +5,6 @@ output:
     theme: tactile
 ---
 
-`r lubridate::today()`
-
 ```{r setup, include=FALSE}
 
 # defaults and libraries
@@ -41,7 +39,7 @@ if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
     mutate(age_hours = age_seconds / 60 / 60) %>% 
     rename(rank_toppage = rank) %>% 
     mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
-                  samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
+           samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
     # dplyr::mutate(subtime_y = lubridate::year(subtime_datetime),
     #               subtime_m = lubridate::month(subtime_datetime),
     #               subtime_d = lubridate::day(subtime_datetime),
@@ -162,6 +160,16 @@ data %>%
 
 ```
 
+```{r}
+
+# TODO: CREATE SHINY WIDGET TO DISPLAY DIFFERENT TIME ZONES
+  
+# mutate(subtime_clocktime = update(subtime_datetime, yday = 1))
+
+```
+
+
+
 
 Lastly, we can look into how the arrival rates of new stories are distributed. The obvious hypothesis would be to assume a Poisson distribution.
 
@@ -238,25 +246,155 @@ As can be seen, arrival rates can be simulated with this fitted Poisson process 
 # How do stories develop on the `New` page?
 
 
+<!--- START -> THIS IS WHAT YOU ARE WORKING ON --->
+
+First of all, let's look into how many votes are cast on the top page as opposed to not on the top page
+
+```{r}
+newpage_moving_window %>% 
+  select(id, score, rank_toppage, rank_newpage, samptime_datetime) %>% 
+  mutate(on_toppage = !(is.na(rank_toppage))) %>% 
+  arrange(id, samptime_datetime) -> data_gained_votes
+
+data_gained_votes %>% 
+  group_by(id) %>% 
+  mutate(next_score = lead(score)) %>% 
+  ungroup() %>% 
+  mutate(gained_votes = next_score - score) %>% 
+  filter(!is.na(gained_votes)) -> gained_votes
+```
+
+
+```{r}
+gained_votes %>% 
+  group_by(on_toppage) %>% 
+  summarize(count = sum(gained_votes)) %>% 
+  ungroup()
+```
+
+```{r}
+
+gained_votes %>% 
+  group_by(rank_toppage) %>% 
+  summarize(mean_gained_votes = mean(gained_votes)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = rank_toppage, y = mean_gained_votes)) +
+  geom_line()
+
+```
+
+Reasonable assumption: The distribution of samples for each rank is about uniformly distributed
+
+```{r}
+gained_votes %>% 
+  # filter(rank_toppage <= 100) %>% 
+  ggplot(aes(x = rank_toppage)) +
+  geom_bar()
+```
+
+```{r}
+# compute number of votes cast at each rank
+gained_votes %>% 
+  group_by(rank_toppage) %>% 
+  summarize(gained_votes_sum = sum(gained_votes)) %>% 
+  ungroup() -> tmp
+
+# format data for distribution fitting
+tmp_matrix <- as.matrix(tmp)
+x <- c()
+for (i in 1:length(tmp_matrix[, 1])) {
+  values <- rep(tmp_matrix[i, 1], tmp_matrix[i, 2])
+  x <- c(x, values)
+}
+x %<>% unname()
+x <- x[!is.na(x)]
+
+# show distribution over first 100 ranks on top page
+tibble(vote_at_rank = x) %>% 
+  filter(vote_at_rank <= 100) %>% 
+  ggplot(aes(x = vote_at_rank)) +
+  geom_bar() +
+  geom_vline(xintercept = 30, linetype = "dashed", color = "red")
+
+```
+
+```{r}
+# fit exponential distribution
+exp_estimator <- MASS::fitdistr(x, densfun = "exponential")
+x_sim <- rexp(length(x), rate = exp_estimator$estimate)
+x_sim %<>% round()
+tibble(simulated_vote_at_rank = x_sim) %>% 
+  filter(simulated_vote_at_rank <= 100) %>% 
+  ggplot(aes(x = simulated_vote_at_rank)) +
+  geom_bar()
+
+```
+
+```{r}
+
+# fit geometric distribution
+geom_estimator <- MASS::fitdistr(x, densfun = "geometric")
+x_sim <- rgeom(length(x), geom_estimator$estimate)
+x_sim <- x_sim + 1
+tibble(simulated_vote_at_rank = x_sim) %>% 
+  filter(simulated_vote_at_rank <= 100) %>% 
+  ggplot(aes(x = simulated_vote_at_rank)) +
+  geom_bar()
+
+```
+<!--- END -> THIS IS WHAT YOU ARE WORKING ON --->
 
 
 
-The next plot shows how the scores of stories develops while they are on the new page.
 
-```{r, eval=FALSE}
+
+
+
+
+
+
+
+
+```{r}
+
+# TODO: INVESTIGATE OUTLIERS
+
+gained_votes %>% 
+  group_by(rank_newpage) %>% 
+  summarize(mean_gained_votes = mean(gained_votes)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = rank_newpage, y = mean_gained_votes)) +
+  geom_point(size = 0.01)
+
+```
+
+
+
+
+
+
+
+
+
+Developments on the new page
+
+```{r}
 data %>% 
-  select(id, age_seconds, score, rank_toppage, subtime_datetime, samptime_datetime) %>%
+  select(id, age_seconds, age_hours, score, rank_toppage, subtime_datetime, samptime_datetime) %>%
   mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
   group_by(samptime_coarse) %>%
-  slice_max(n = 200, order_by = subtime_datetime) %>%
+  arrange(desc(subtime_datetime)) %>% 
   mutate(rank_newpage = row_number()) %>% 
   ungroup() %>% 
   arrange(samptime_coarse) %>% 
   mutate(on_toppage = !is.na(rank_toppage)) -> newpage_moving_window
+
+# COMMENT: alternatively, the following function can be used to observe only the first 200 elements on the new page
+# slice_max(n = 200, order_by = subtime_datetime)
 ```
 
 
-TODO: ANALYSE HOW MANY VOTES STORIES GET BEFORE THEY GET TO THE FRONT PAGE (AGGREGATE OVER ALL STORIES ON THE NEW PAGE).
+The next plot shows how the scores of stories develops while they are on the new page.
 
 ```{r, eval=FALSE}
 color_scheme <- c("FALSE" = "darkgrey", "TRUE" = "red")
@@ -287,12 +425,10 @@ set.seed(123)
 newpage_moving_window %>% 
   get_random_sample(100) %>% 
   filter(age_seconds <= 50000) %>%
-  ggplot(aes(x = age_seconds / 3600, y = score, group = id, color = on_toppage)) +
-  # geom_jitter(alpha = 0.2, height = 0.05) +
-  geom_point(alpha = 0.2) +
+  ggplot(aes(x = age_hours, y = score, group = id, color = on_toppage)) +
+  geom_jitter(alpha = 0.05, height = 0.01) +
   scale_color_manual(values = color_scheme) +
-  # scale_x_continuous(trans = "reverse") +
-  scale_y_log10() +
+  # scale_y_log10() +
   theme_hn() +
   NULL
 ```
@@ -307,6 +443,14 @@ newpage_moving_window %>%
   
   
 ```
+
+
+
+
+
+
+
+
 
 
 
