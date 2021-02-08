@@ -5,7 +5,7 @@ output:
     theme: tactile
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, warning=FALSE}
 
 # defaults and libraries
 knitr::opts_chunk$set(echo = FALSE, message = FALSE)
@@ -15,62 +15,19 @@ library(magrittr)
 library(gganimate)
 source("helpers.R")
 
-```
-
-
-
-
-
-
-
-
-# Data Formatting
-
-
-```{r read-data}
-
-# if processed data is not in data folder: process, save and load
-# else: load processed data
+# load / preprocess data
 if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
-  data <- read.table(file.path("..", "data", "newstories_2021-01-26_14-32-18.tsv"), sep = "\t", header = TRUE)
-  data %<>% 
-    mutate(rank = as.numeric(rank),
-           age_seconds = sample_time - submission_time) %>% 
-    mutate(age_hours = age_seconds / 60 / 60) %>% 
-    rename(rank_toppage = rank) %>% 
-    mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
-           samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
-    # dplyr::mutate(subtime_y = lubridate::year(subtime_datetime),
-    #               subtime_m = lubridate::month(subtime_datetime),
-    #               subtime_d = lubridate::day(subtime_datetime),
-    #               subtime_h = lubridate::hour(subtime_datetime),
-    #               subtime_m = lubridate::minute(subtime_datetime),
-    #               subtime_s = lubridate::second(subtime_datetime),
-    #               samptime_y = lubridate::year(samptime_datetime),
-    #               samptime_m = lubridate::month(samptime_datetime),
-    #               samptime_d = lubridate::day(samptime_datetime),
-    #               samptime_h = lubridate::hour(samptime_datetime),
-    #               samptime_m = lubridate::minute(samptime_datetime),
-    #               samptime_s = lubridate::second(samptime_datetime)) %>%
-    mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
-    select(-c(submission_time, sample_time))
-  readr::write_rds(data, file.path("..", "data", "hn-data-processed.rds"), compress = "gz")  
+  source("preprocess.R")
 } else {
   data <- readr::read_rds(file.path("..", "data", "hn-data-processed.rds"))  
 }
 
+# TODO: EXCLUDE INCOMPLETE DATA FROM "COLD START"?
 ```
 
-```{r anonymization}
 
-# for publication: replace id column with this anonymous id column (via inner_join)
-data %>% 
-  select(id) %>% 
-  unique() %>% 
-  arrange(id) %>% 
-  mutate(anon_id = row_number()) -> id_set
 
-```
+
 
 ```{r helper-functions}
 
@@ -106,7 +63,7 @@ get_first_n <- function(data, n) {
 
 ```
 
-```{r, message=TRUE}
+```{r, message=TRUE, eval=FALSE}
 
 # test functions
 data %>% get_first_n(100)
@@ -124,8 +81,7 @@ data %>% get_random_sample(100)
 
 # Distribution of Submissions over Time
 
-
-During the entire timeframe of our sampling, a clear regularity in terms of posting volume can be observed. 
+Posting activities seem to fluctuate in a regular pattern. The period for this fluctuation pattern is very apparent: It's daily. The following plot shows a kernel density estimation plotted over time. I included the red dashed line because the scraper has some sort of a cold start problem: The prior development of already existing stories at the time of starting the scraper are not in the data. This may lead to some distortions which is why I will probably exclude the stories for which this is the case.
 
 ```{r kde-posting-volume-datetime}
 
@@ -142,8 +98,8 @@ data %>%
 
 ```
 
+As already mentioned, the activity seems to fluctuate on a daily basis. It makes sense to aggregate over all days and look into what a typical day on Hacker News might look like. 
 
-Looking into this pattern, we can see that (from the perspective of Central European Time) there is low traffic in the early morning, then it picks up and increases until it reaches its peak at around 6 pm.
 
 ```{r kde-posting-volume-time}
 
@@ -159,36 +115,119 @@ data %>%
   theme(axis.text.y = element_blank())
 
 ```
+We can see that (from the perspective of Central European Time) there is low traffic in the early morning, then it picks up and increases until it reaches its peak at around 6 or 7 pm CET. 
 
 ```{r}
 
-# TODO: CREATE SHINY WIDGET TO DISPLAY DIFFERENT TIME ZONES
-  
-# mutate(subtime_clocktime = update(subtime_datetime, yday = 1))
+lubridate::with_tz("2021-01-01 19:00:00", tzone = "America/Los_Angeles")
 
 ```
 
+At 7 pm CET, it is 10 am PST. Going out on a limb, I would argue that the peak is probably due to work days starting in Silicon Valley, as presumably, a significant portion of the user base is located there.  
 
 
 
-Lastly, we can look into how the arrival rates of new stories are distributed. The obvious hypothesis would be to assume a Poisson distribution.
+
+The following analysis will clarify the substructure of this posting volume fluctuation. 
+
+```{r}
+data %>% 
+  mutate(subtime_date = lubridate::as_date(subtime_datetime),
+         subtime_hour = lubridate::hour(subtime_datetime)) %>% 
+  select(id, subtime_date, subtime_hour) %>% 
+  distinct() %>% 
+  group_by(subtime_date, subtime_hour) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>%
+  group_by(subtime_hour) %>% 
+  summarize(mean_count_per_hour = mean(count)) %>% 
+  ungroup() %>% 
+  mutate(mean_count_per_hour_standardized = (mean_count_per_hour - mean(mean_count_per_hour)) / sd(mean_count_per_hour),
+         subtime_hour_scaled = subtime_hour / 24) %>% 
+  select(subtime_hour, subtime_hour_scaled, mean_count_per_hour, mean_count_per_hour_standardized) -> data_posting_volume
+
+```
+
+Let's first look at the posting volume aggregated and summarized for each hour of the day. The following plot shows the mean number of posts for each hour of the day. Arguably, this is an "average" day on Hacker News. 
+
+```{r}
+data_posting_volume %>% 
+  ggplot(aes(x = subtime_hour, y = mean_count_per_hour)) +
+  geom_point(size = 2) +
+  ylim(c(10, 80)) +
+  scale_x_continuous(breaks = seq(0, 23, by = 6)) +
+  labs(title = "Average Posting Volume per Hour",
+       x = "Hour of Day",
+       y = "Average Number of New Stories",
+       caption = "The red dashed line indicates the daily average.") +
+  geom_hline(yintercept = mean(data_posting_volume$mean_count_per_hour), 
+             linetype = "dashed", color = "red", size = 1) +
+  theme_hn()
+```
+
+If we transform this data a little bit, we might be able to fit a simple function to it, so that we can simulate the fluctuations of the arrival rate over the day. 
+
+```{r}
+data_posting_volume %>% 
+  ggplot(aes(x = subtime_hour_scaled, y = mean_count_per_hour_standardized)) +
+  geom_point() +
+  ylim(c(-2, 2)) +
+  labs(title = "Average Posting Volume per Hour (Scaled)",
+       x = "Time of Day [0, 1]",
+       y = "Average Number of New Stories [Z-Scores]") +
+  geom_hline(yintercept = 0, linetype = "solid", size = 1) +
+  theme_hn()
+```
+
+The hour of the day was scaled to the interval [0, 1] and the average number of new stories per hour was standardized (i.e., Z-scores were computed). Eye-balling it, I would say that this trend curve can be approximated pretty well with the sine function. Strikingly, the saddle point seems to be exactly in the middle of the day, making it even more convenient to fit a sine function to the data. 
+
+
+```{r}
+
+adj_sin <- function(x) {
+  -sin(6.4 * x)
+}
+adj_sin2 <- function(x) {
+  1.5 * (-sin(6.4 * x))
+}
+
+data_posting_volume %>% 
+  ggplot(aes(x = subtime_hour_scaled, y = mean_count_per_hour_standardized)) +
+  geom_point() +
+  ylim(c(-2, 2)) +
+  labs(title = "Average Posting Volume per Hour (Scaled)",
+       x = "Time of Day [0, 1]",
+       y = "Average Number of New Stories [Z-Scores]") +
+  geom_function(fun = adj_sin, color = "blue", size = 1) +
+  geom_function(fun = adj_sin2, color = "red", size = 1) +
+  geom_hline(yintercept = 0, linetype = "solid", size = 1) +
+  theme_hn()
+```
+This plot shows the data overlaid with the functions $-sin(\beta x)$ and $-\alpha sin(\beta x)$ with "hand-adjusted $\alpha$ and $\beta$. Obviously, the two parameters can be fitted with a simple least squared approach, but so far, I didn't have time to implement such an approach (especially not in R...).
+
+
+<!--- TO DO: REFACTOR THIS PART --->
+<!--- \START --->
+
+Another approach to get insight into the arrival rates of new stories on Hacker News is to look into the actual rates of arrival which our data affords. I will operate with the hypothesis that this data is Poisson distributed. Rates of arrival are the archetypal case for the Poisson distribution, so I suppose it is reasonable to assume this. 
+
 
 ```{r format-data-for-submission-times}
 # get IDs and submission times and sort them by temporally
 data %>% 
   select(id, subtime_datetime) %>% 
-  unique() %>% 
+  distinct() %>% 
   arrange(subtime_datetime) %>% 
   select(subtime_datetime) -> sorted_submission_times
 
 # compute for every 1 minute timeslice how many new stories are posted
 tibble(subtime = sorted_submission_times$subtime_datetime, 
        bin = cut(sorted_submission_times$subtime_datetime, 
-                 breaks = "1 min", 
-                 labels = FALSE)) %>% 
+                 breaks = "1 min", labels = FALSE)) %>% 
   mutate(bin = factor(bin, levels = seq(1, max(bin), by = 1))) %>% 
   group_by(bin, .drop = FALSE) %>% 
   summarize(arr_count = n()) -> arrival_counts
+
 ```
 
 
@@ -240,6 +279,162 @@ ggpubr::ggarrange(p1, p2, ncol = 1)
 As can be seen, arrival rates can be simulated with this fitted Poisson process very accurately. If we can determine the user behavior equally well, we can find a good mapping between real-world time and simulation time.
 
 
+lambda -> "sinus(t)"
+
+<!--- \END --->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+data %>% 
+  select(id, subtime_clocktime) %>% 
+  distinct() %>% 
+  arrange(subtime_clocktime) %>% 
+  group_by(subtime_clocktime) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>% 
+  arrange(subtime_clocktime) -> subs_per_minute
+```
+
+
+
+
+```{r}
+
+
+tmp %>% 
+  ggplot(aes(x = subtime_clocktime, y = count)) +
+  geom_point()
+
+
+
+
+
+mean_count <- mean(tmp2$count)
+
+adj_sin <- function(x) {
+  1.5 * sin(-6.4 * x)
+}
+adj_sin2 <- function(x) {
+  sin(-6.4 * x)
+}
+
+
+
+tmp2 %>% 
+  ggplot(aes(x = subtime_hour_slice, y = count_standardized)) +
+  geom_point() +
+  ylim(c(-2, 2)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_function(fun = adj_sin, color = "red", size = 2) +
+  geom_function(fun = adj_sin2, color = "green", size = 2) +
+  geom_smooth() +
+  theme_hn()
+
+
+
+
+tmp2 %>% 
+  mutate(count_standardized_pred = adj_sin(subtime_hour_slice)) %>% 
+  mutate(error = abs(count_standardized - count_standardized_pred)) -> tmp3
+
+
+
+mse <- mean((tmp3$error)^2)
+rmse <- sqrt(mse)
+
+mse
+rmse
+
+```
+
+```{r}
+simulated_arrivals <- arrow::read_feather(file.path("..", "data", "simulated_arrivals3.feather"))
+simulated_arrivals %<>% mutate(count_simulated = simulated_arrivals) %>% select(-simulated_arrivals)
+```
+
+
+```{r}
+simulated_arrivals %>% 
+  inner_join(subcounts_real, by = "time_index") %>% 
+  select(time_index, count_simulated, subtime_hour) %>% 
+  group_by(subtime_hour) %>% 
+  summarize(count = sum(count_simulated)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = subtime_hour, y = count)) +
+  geom_point()
+```
+
+This approach doesn't seem to work yet. We have to find some way of estimating the function that produces lambda for the Poisson distribution at any given time. 
+
+
+```{r}
+# transform real submission counts
+start <- lubridate::as_datetime("2021-01-01 00:00:00 CET") %>% as.numeric()
+minute_slices <- seq(0, (60 * 60 * 24) - 1, by = 60)
+norm_value <- rep(start, 60 * 24)
+df <- data.frame(x = minute_slices, y = norm_value)
+df %<>% 
+  mutate(unix_dt = y + x) %>% 
+  mutate(subtime_coarse = lubridate::as_datetime(unix_dt)) %>% 
+  mutate(time_index = row_number())
+df %>% 
+  left_join(tmp, by = "subtime_coarse") %>% 
+  tidyr::replace_na(replace = list(count = 0)) %>% 
+  mutate(subtime_hour = lubridate::hour(subtime_coarse)) %>% 
+  mutate(count_real = count) %>% 
+  select(time_index, subtime_coarse, subtime_hour, count_real) -> subcounts_real
+  
+# compare to simulated submission counts
+subcounts_real %>% 
+  inner_join(simulated_arrivals, by = "time_index") %>% 
+  # group_by(subtime_hour) %>% 
+  # summarize(count_real = sum(count_real),
+  #           count_simulated = sum(count_simulated)) %>% 
+  # ungroup()
+  identity()
+
+```
+
+
+
+
+
+```{r}
+
+# TODO: CREATE SHINY WIDGET TO DISPLAY DIFFERENT TIME ZONES
+  
+# mutate(subtime_clocktime = update(subtime_datetime, yday = 1))
+
+```
+
+
+
+
+
 
 
 
@@ -249,6 +444,24 @@ As can be seen, arrival rates can be simulated with this fitted Poisson process 
 <!--- START -> THIS IS WHAT YOU ARE WORKING ON --->
 
 First of all, let's look into how many votes are cast on the top page as opposed to not on the top page
+
+
+```{r}
+# COPIED FROM BELOW
+data %>% 
+  select(id, age_seconds, age_hours, score, rank_toppage, subtime_datetime, samptime_datetime) %>%
+  mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
+  group_by(samptime_coarse) %>%
+  arrange(desc(subtime_datetime)) %>% 
+  mutate(rank_newpage = row_number()) %>% 
+  ungroup() %>% 
+  arrange(samptime_coarse) %>% 
+  mutate(on_toppage = !is.na(rank_toppage)) -> newpage_moving_window
+
+# COMMENT: alternatively, the following function can be used to observe only the first 200 elements on the new page
+# slice_max(n = 200, order_by = subtime_datetime)
+```
+
 
 ```{r}
 newpage_moving_window %>% 
@@ -272,6 +485,8 @@ gained_votes %>%
   ungroup()
 ```
 
+
+
 ```{r}
 
 gained_votes %>% 
@@ -282,6 +497,11 @@ gained_votes %>%
   geom_line()
 
 ```
+
+Erklärungsansätze: Warum auch auf hinteren Rängen noch Votes?
+* Zeitversatz?
+
+
 
 Reasonable assumption: The distribution of samples for each rank is about uniformly distributed
 
@@ -342,6 +562,10 @@ tibble(simulated_vote_at_rank = x_sim) %>%
   geom_bar()
 
 ```
+Pareto Verteilung?
+
+Zipf distribution? -> very likely -> !
+
 <!--- END -> THIS IS WHAT YOU ARE WORKING ON --->
 
 
@@ -368,7 +592,18 @@ gained_votes %>%
 
 ```
 
+```{r}
 
+# TODO: INVESTIGATE OUTLIERS
+
+gained_votes %>% 
+  # group_by(rank_newpage) %>% 
+  # summarize(mean_gained_votes = mean(gained_votes)) %>% 
+  # ungroup() %>% 
+  ggplot(aes(x = rank_newpage, y = gained_votes)) +
+  geom_point(size = 0.01)
+
+```
 
 
 
@@ -400,11 +635,13 @@ The next plot shows how the scores of stories develops while they are on the new
 color_scheme <- c("FALSE" = "darkgrey", "TRUE" = "red")
 set.seed(123)
 newpage_moving_window %>% 
-  get_random_sample(100) %>% 
+  filter(rank_newpage <= 1000) %>% 
+  get_random_sample(50) %>% 
   ggplot(aes(x = rank_newpage, y = score, group = id, color = on_toppage)) +
   geom_jitter(alpha = 0.1, height = 0.05) +
   scale_x_continuous(trans = "reverse") +
   scale_color_manual(values = color_scheme) +
+  scale_y_log10() +
   labs(title = "How do stories emerge from the new page to the top page?",
        x = "Newpage Rank",
        y = "Score", 
@@ -415,6 +652,39 @@ newpage_moving_window %>%
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank())
 ```
+
+```{r}
+
+color_scheme <- c("FALSE" = "darkgrey", "TRUE" = "red")
+set.seed(123)
+newpage_moving_window %>%
+  sample_n(20000) %>% 
+  filter(score <= 1000) %>% 
+  # get_random_sample(50) %>% 
+  ggplot(aes(x = age_hours, y = score, color = on_toppage)) +
+  # geom_jitter(alpha = 0.1, height = 0.05) +
+  geom_point(alpha = 0.2) +
+  # scale_x_continuous(trans = "reverse") +
+  scale_color_manual(values = color_scheme) +
+  # scale_y_log10() +
+  labs(title = "How do stories emerge from the new page to the top page?",
+       x = "Newpage Rank",
+       y = "Score", 
+       color = "On Toppage") +
+  # coord_flip() +
+  facet_wrap(. ~ on_toppage) +
+  theme_hn() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+```
+
+
+Annahme: erste drei Votes sind random
+Qualität und Clickbaitiness
+
+
 
 ```{r}
 
@@ -508,7 +778,7 @@ Some stories seem to be deleted after some time, resulting in a score NA (see ta
 ```{r}
 data %>% 
   dplyr::select(id, score, rank_toppage, subtime_datetime, samptime_datetime) %>%
-  dplyr::rename(rank_toppage = rank) %>% 
+  # dplyr::rename(rank_toppage = rank) %>% 
   dplyr::mutate(samptime_coarse = lubridate::round_date(samptime_datetime, unit = "minute")) %>% 
   dplyr::group_by(samptime_coarse) %>%
   dplyr::arrange(desc(subtime_datetime)) %>% 
@@ -815,6 +1085,8 @@ There is a significant amount of stories with score 1 that make it to the top pa
 
 
 About 22.7 % of all stories make it to the top page.
+
+
 
 
 

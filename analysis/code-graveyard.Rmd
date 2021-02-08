@@ -1,0 +1,43 @@
+---
+title: "Code Graveyard"
+author: "Johannes Nakayama"
+date: "8 2 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# Old code to preprocess / load data
+
+```{r read-data, eval=FALSE}
+
+# if processed data is not in data folder: process, save and load
+# else: load processed data
+if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
+  data <- read.table(file.path("..", "data", "newstories_2021-01-26_14-32-18.tsv"), sep = "\t", header = TRUE)
+  
+  
+  data %<>% 
+    mutate(rank = as.numeric(rank),
+           age_seconds = sample_time - submission_time) %>% 
+    mutate(age_hours = age_seconds / 60 / 60) %>% 
+    rename(rank_toppage = rank) %>% 
+    mutate(subtime_datetime = lubridate::as_datetime(submission_time, tz = "CET"),
+           samptime_datetime = lubridate::as_datetime(sample_time, tz = "CET")) %>% 
+    mutate(subtime_coarse = lubridate::floor_date(subtime_clocktime, "minute")) %>% 
+    mutate(subtime_date = lubridate::as_date(subtime_datetime),
+           subtime_hour = lubridate::hour(subtime_datetime)) %>% 
+    mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
+    select(-c(submission_time, sample_time))
+  readr::write_rds(data, file.path("..", "data", "hn-data-processed.rds"), compress = "gz")  
+} else {
+  data <- readr::read_rds(file.path("..", "data", "hn-data-processed.rds"))  
+}
+
+```
+
+
