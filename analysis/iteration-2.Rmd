@@ -5,6 +5,11 @@ output:
     theme: tactile
 ---
 
+
+[STARTED: 2021-01-05]  
+[UPDATED: 2021-02-09]
+
+
 ```{r setup, include=FALSE, warning=FALSE}
 
 # defaults and libraries
@@ -23,6 +28,7 @@ if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
 }
 
 ```
+
 
 
 
@@ -83,6 +89,12 @@ data %>%
 
 # Distribution of Submissions over Time
 
+
+In this first part of the analysis, I will focus on the rates at which new submissions arrive on Hacker News. The goal is to come up with a way to accurately simulate this whole process. 
+
+
+### Posting Volume over Time
+
 Posting activities seem to fluctuate in a regular pattern. The period for this fluctuation pattern is very apparent: It's daily. The following plot shows a kernel density estimation plotted over time. I included the red dashed line because the scraper has some sort of a cold start problem: The prior development of already existing stories at the time of starting the scraper are not in the data. This may lead to some distortions which is why I will probably exclude the stories for which this is the case.
 
 ```{r kde-posting-volume-datetime}
@@ -130,10 +142,12 @@ At 7 pm CET, it is 10 am PST. Going out on a limb, I would argue that the peak i
 
 
 
+### Regular Patterns in Daily Fluctuation
+
 
 The following analysis will clarify the substructure of this posting volume fluctuation. 
 
-```{r}
+```{r format-data-for-fluctuation-analysis}
 data_cropped %>% 
   mutate(subtime_date = lubridate::as_date(subtime_datetime),
          subtime_hour = lubridate::hour(subtime_datetime)) %>% 
@@ -149,12 +163,11 @@ data_cropped %>%
          subtime_hour_scaled = subtime_hour / 24) %>% 
   select(subtime_hour, subtime_hour_scaled, mean_count_per_hour, mean_count_per_hour_standardized) -> data_posting_volume
 
-```
 
-```{r}
 if (!("data-posting-volume.feather" %in% list.files(file.path("..", "data")))) {
   arrow::write_feather(data_posting_volume, sink = file.path("..", "data", "data-posting-volume.feather"))
 }
+
 ```
 
 
@@ -189,22 +202,22 @@ data_posting_volume %>%
   theme_hn()
 ```
 
-The hour of the day was scaled to the interval [0, 1] and the average number of new stories per hour was standardized (i.e., Z-scores were computed). Eye-balling it, I would say that this trend curve can be approximated pretty well with the sine function. Strikingly, the saddle point seems to be exactly in the middle of the day, making it even more convenient to fit a sine function to the data. 
+The hour of the day was scaled to the interval [0, 1] and the average number of new stories per hour was standardized (i.e., Z-scores were computed). Eye-balling it, I would say that this trend curve can be approximated pretty well with the sine function. Strikingly, the saddle point seems to be almost exactly in the middle of the day, making it even more convenient to fit a sine function to the data. We can thus limit our analysis on one period of the sine function (i.e., the fitted function should look somewhat like $sin(2 \pi x)$).
 
 
 ```{r}
-
-
 adj_sin <- function(x) {
-  -sin(6.4 * x)
+  -sin(2 * pi * x)
 }
 adj_sin2 <- function(x) {
-  1.5 * (-sin(6.4 * x))
+  1.5 * (-sin(2 * pi * x))
 }
+
 
 data_posting_volume %>% 
   ggplot(aes(x = subtime_hour_scaled, y = mean_count_per_hour_standardized)) +
   geom_point() +
+  xlim(c(0, 1)) +
   ylim(c(-2, 2)) +
   labs(title = "Average Posting Volume per Hour (Scaled)",
        x = "Time of Day [0, 1]",
@@ -214,15 +227,20 @@ data_posting_volume %>%
   geom_hline(yintercept = 0, linetype = "solid", size = 1) +
   theme_hn()
 ```
-This plot shows the data overlaid with the functions $-sin(\beta x)$ and $-\alpha sin(\beta x)$ with "hand-adjusted $\alpha$ and $\beta$. Obviously, the two parameters can be fitted with a simple least squared approach, but so far, I didn't have time to implement such an approach (especially not in R...).
+
+This plot shows the data overlaid with the functions $-sin(2 \pi x)$ (blue) and $-1.5 sin(\beta x)$ (red). The parameter 1.5 was "hand-adjusted". Obviously, this should be done with a simple fitting algorithm, but this is a bit awkward in R, so I did it in Python (see below).
+
+[LINK TO JUPYTER OUTPUT]  
 
 
-
+Fitting the above function (with one parameter) to the data yields the following curve.
 
 ```{r}
 
-adj_sin <- function(x, alpha=6.17725586778391) {
-  -sin(alpha * x)
+param <- 1.3441739239406807
+
+adj_sin <- function(x, alpha=1.3441739239406807) {
+  -alpha * sin(2 * pi * x)
 }
 
 data_posting_volume %>% 
@@ -232,19 +250,26 @@ data_posting_volume %>%
   xlim(c(0, 1)) +
   labs(title = "Average Posting Volume per Hour (Scaled)",
        x = "Time of Day [0, 1]",
-       y = "Average Number of New Stories [Z-Scores]") +
+       y = "Average Number of New Stories [Z-Scores]",
+       caption = glue::glue("The red line is the fitted function with alpha = {round(param, 3)}")) +
   geom_function(fun = adj_sin, color = "firebrick", size = 1) +
   geom_hline(yintercept = 0, linetype = "solid", size = 1) +
   theme_hn()
 
 ```
 
+I think this is a satisfactory fit. One thing yet to determine though is how we use this finding to bias the arrival rates. The first idea would be to draw from a Poisson distribution where $\lambda$ is a function of time, i.e., $\lambda(t) \sim - \alpha sin(2 \pi t)$.
 
-<!--- TO DO: REFACTOR THIS PART --->
-<!--- \START --->
+
+
+
+### Arrival Rates as a Poisson Process
+
 
 Another approach to get insight into the arrival rates of new stories on Hacker News is to look into the actual rates of arrival which our data affords. I will operate with the hypothesis that this data is Poisson distributed. Rates of arrival are the archetypal case for the Poisson distribution, so I suppose it is reasonable to assume this. 
 
+
+First, we need to extract all the submission times and sort them chronologically.
 
 ```{r format-data-for-submission-times}
 # get IDs and submission times and sort them by temporally
@@ -253,7 +278,12 @@ data %>%
   distinct() %>% 
   arrange(subtime_datetime) %>% 
   select(subtime_datetime) -> sorted_submission_times
+```
 
+
+Next, we cut the timestamps into equal-sized bins (in this case one minute) and count the number of submissions for each bin. 
+
+```{r format-data-for-submission-times}
 # compute for every 1 minute timeslice how many new stories are posted
 tibble(subtime = sorted_submission_times$subtime_datetime, 
        bin = cut(sorted_submission_times$subtime_datetime, 
@@ -264,16 +294,39 @@ tibble(subtime = sorted_submission_times$subtime_datetime,
 
 ```
 
+We are working with the following data.
 
+```{r}
+
+arrival_counts %>% 
+  knitr::kable()
+
+```
+
+
+The computed arrival counts per timeslice is the data that I assume to be Poisson distributed. The Poisson distribution has one parameter, $\lambda$, which is simply the arithmetic mean. Thus, the arrival times distribution function can easily be computed as follows to simulate the process.
+
+```{r simulate-arrival-rates}
+# simulate this process
+set.seed(1)
+n <- dim(arrival_counts)[1]
+lambda <- mean(arrival_counts$arr_count)
+simulated_distribution <- tibble(arr_count = rpois(n, lambda))
+simulated_distribution %>% 
+  knitr::kable()
+```
+
+
+This table displays simulated arrival rates. This is the simulated version of the prior table.
 
 
 ```{r plot-submission-times-distributions}
-# generics
+# plot generics
 y_max <- 7000
 rate_max <- 7
 
 # show real distribution of arrival times
-p1 <- arrival_counts %>% 
+(p1 <- arrival_counts %>% 
   ggplot(aes(x = arr_count)) +
   geom_bar(color = "transparent", fill = "black", alpha = 0.8) +
   ylim(c(0, y_max)) +
@@ -284,13 +337,8 @@ p1 <- arrival_counts %>%
   coord_flip() +
   theme_hn() +
   theme(panel.grid.minor.x = element_blank(),
-        panel.grid.minor.y = element_blank())
+        panel.grid.minor.y = element_blank()))
 
-# simulate this process
-set.seed(1)
-n <- dim(arrival_counts)[1]
-lambda <- mean(arrival_counts$arr_count)
-simulated_distribution <- tibble(arr_count = rpois(n, lambda))
 
 # show simulated distribution of arrival times
 p2 <- simulated_distribution %>% 
@@ -310,14 +358,11 @@ ggpubr::ggarrange(p1, p2, ncol = 1)
 
 ```
 
-As can be seen, arrival rates can be simulated with this fitted Poisson process very accurately. If we can determine the user behavior equally well, we can find a good mapping between real-world time and simulation time.
+Plotting the simulated arrival rates against the empirical one shows that the process is very accurately modeled with the Poisson distribution. 
 
 
-lambda -> "sinus(t)"
 
-<!--- \END --->
-
-
+[THE DEMONSTRATION OF THE SIMULATED PROCESS GOES HERE]
 
 
 
