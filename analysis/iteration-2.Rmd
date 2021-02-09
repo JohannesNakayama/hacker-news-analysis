@@ -22,7 +22,6 @@ if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
   data <- readr::read_rds(file.path("..", "data", "hn-data-processed.rds"))  
 }
 
-# TODO: EXCLUDE INCOMPLETE DATA FROM "COLD START"?
 ```
 
 
@@ -63,35 +62,17 @@ get_first_n <- function(data, n) {
 
 ```
 
-```{r, message=TRUE, eval=FALSE}
 
-# test functions
-data %>% get_first_n(100)
-data %>% get_random_sample(100)
-
-```
-
-
-
-
-
-how to subset data?
-
-understand cold-start problem
-
-```{r}
-
+```{r cold-start-robust-data}
 
 sampling_start <- min(data$samptime_datetime)
+sampling_end <- max(data$samptime_datetime)
 
-data$samptime_datetime[1]
-
-cutof_start <- lubridate::force_tz(lubridate::as_datetime("2021-01-27 00:00:00"), tzone = "CET")
+cutof_start <- lubridate::ceiling_date(sampling_start, "day")
+cutof_end <- lubridate::floor_date(sampling_end, "day")
 
 data %>% 
-  filter(samptime_datetime >= cutof_start) %>% 
-  arrange(samptime_datetime)
-
+  filter((samptime_datetime >= cutof_start) & (samptime_datetime <= cutof_end)) -> data_cropped
 
 ```
 
@@ -120,11 +101,12 @@ data %>%
 ```
 
 As already mentioned, the activity seems to fluctuate on a daily basis. It makes sense to aggregate over all days and look into what a typical day on Hacker News might look like. 
+For this analysis, we look at a subset of the data set that accounts for different start and end times of the scraper. We cropped to the ceiling of the first sampling day and the floor of the last one. 
 
 
 ```{r kde-posting-volume-time}
 
-data %>% 
+data_cropped %>% 
   ggplot(aes(x = subtime_clocktime)) +
   geom_density(color = "black", fill = "black", alpha = 0.5, size = 1) +
   labs(title = "KDE of Posting Volume by Time of Day",
@@ -152,7 +134,7 @@ At 7 pm CET, it is 10 am PST. Going out on a limb, I would argue that the peak i
 The following analysis will clarify the substructure of this posting volume fluctuation. 
 
 ```{r}
-data %>% 
+data_cropped %>% 
   mutate(subtime_date = lubridate::as_date(subtime_datetime),
          subtime_hour = lubridate::hour(subtime_datetime)) %>% 
   select(id, subtime_date, subtime_hour) %>% 
@@ -168,6 +150,13 @@ data %>%
   select(subtime_hour, subtime_hour_scaled, mean_count_per_hour, mean_count_per_hour_standardized) -> data_posting_volume
 
 ```
+
+```{r}
+if (!("data-posting-volume.feather" %in% list.files(file.path("..", "data")))) {
+  arrow::write_feather(data_posting_volume, sink = file.path("..", "data", "data-posting-volume.feather"))
+}
+```
+
 
 Let's first look at the posting volume aggregated and summarized for each hour of the day. The following plot shows the mean number of posts for each hour of the day. Arguably, this is an "average" day on Hacker News. 
 
@@ -205,11 +194,12 @@ The hour of the day was scaled to the interval [0, 1] and the average number of 
 
 ```{r}
 
+
 adj_sin <- function(x) {
   -sin(6.4 * x)
 }
 adj_sin2 <- function(x) {
-  1.5 * (-sin(6.5 * x))
+  1.5 * (-sin(6.4 * x))
 }
 
 data_posting_volume %>% 
@@ -225,6 +215,29 @@ data_posting_volume %>%
   theme_hn()
 ```
 This plot shows the data overlaid with the functions $-sin(\beta x)$ and $-\alpha sin(\beta x)$ with "hand-adjusted $\alpha$ and $\beta$. Obviously, the two parameters can be fitted with a simple least squared approach, but so far, I didn't have time to implement such an approach (especially not in R...).
+
+
+
+
+```{r}
+
+adj_sin <- function(x, alpha=6.17725586778391) {
+  -sin(alpha * x)
+}
+
+data_posting_volume %>% 
+  ggplot(aes(x = subtime_hour_scaled, y = mean_count_per_hour_standardized)) +
+  geom_point() +
+  ylim(c(-2, 2)) +
+  xlim(c(0, 1)) +
+  labs(title = "Average Posting Volume per Hour (Scaled)",
+       x = "Time of Day [0, 1]",
+       y = "Average Number of New Stories [Z-Scores]") +
+  geom_function(fun = adj_sin, color = "firebrick", size = 1) +
+  geom_hline(yintercept = 0, linetype = "solid", size = 1) +
+  theme_hn()
+
+```
 
 
 <!--- TO DO: REFACTOR THIS PART --->
