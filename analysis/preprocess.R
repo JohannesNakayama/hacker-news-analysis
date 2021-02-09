@@ -13,7 +13,7 @@ data_raw %>%
   mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) %>% 
   mutate(subtime_datetime_rounded = lubridate:: floor_date(subtime_datetime, "minute"),
          subtime_clocktime_rounded = lubridate::floor_date(subtime_clocktime, "minute"),
-         samptime_datetime_rounded = lubridate::round_date(samptime_datetime)) %>% 
+         samptime_datetime_rounded = lubridate::round_date(samptime_datetime, "minute")) %>% 
   group_by(samptime_datetime_rounded) %>%
   arrange(desc(subtime_datetime)) %>% 
   mutate(rank_newpage = row_number()) %>% 

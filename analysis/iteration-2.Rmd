@@ -75,6 +75,27 @@ data %>% get_random_sample(100)
 
 
 
+how to subset data?
+
+understand cold-start problem
+
+```{r}
+
+
+sampling_start <- min(data$samptime_datetime)
+
+data$samptime_datetime[1]
+
+cutof_start <- lubridate::force_tz(lubridate::as_datetime("2021-01-27 00:00:00"), tzone = "CET")
+
+data %>% 
+  filter(samptime_datetime >= cutof_start) %>% 
+  arrange(samptime_datetime)
+
+
+```
+
+
 
 
 
@@ -188,7 +209,7 @@ adj_sin <- function(x) {
   -sin(6.4 * x)
 }
 adj_sin2 <- function(x) {
-  1.5 * (-sin(6.4 * x))
+  1.5 * (-sin(6.5 * x))
 }
 
 data_posting_volume %>% 
