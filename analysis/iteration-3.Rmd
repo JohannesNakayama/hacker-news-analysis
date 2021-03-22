@@ -1,0 +1,213 @@
+---
+title: "Hacker News Analysis"
+output: 
+  prettydoc::html_pretty:
+    theme: tactile
+---
+
+
+```{r setup, include=FALSE, warning=FALSE}
+
+# defaults and libraries
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(tidyr)
+library(gganimate)
+source("helpers.R")
+
+# load / preprocess data
+if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
+  source("preprocess.R")
+} else {
+  data <- readr::read_rds(file.path("..", "data", "hn-data-processed.rds"))  
+}
+
+```
+
+
+
+### Arrival Rate as Poisson Process
+
+We model the number of stories arriving per minute with a Poisson distribution. For this estimation, we limit our data set to stories that were submitted *after* we started sampling. For older stories, the exact arrival counts are not computable (you might consider this a "cold start problem").
+
+```{r format-data-for-submission-times}
+
+# crop the data to only include stories which were surveyed from the time of their submission
+sampling_start <- min(data$samptime_datetime)
+data %>% filter((subtime_datetime >= sampling_start)) -> data_subtimes_cropped
+
+# get IDs and submission times and sort them in ascending order by submission time
+data_subtimes_cropped %>% 
+  select(id, subtime_datetime) %>% 
+  distinct() %>% 
+  arrange(subtime_datetime) %>% 
+  select(subtime_datetime) -> sorted_submission_times
+
+# compute for every 1 minute time slice how many new stories are posted
+tibble(subtime = sorted_submission_times$subtime_datetime, 
+       bin = cut(sorted_submission_times$subtime_datetime, 
+                 breaks = "1 min", labels = FALSE)) %>% 
+  mutate(bin = factor(bin, levels = seq(1, max(bin), by = 1))) %>% 
+  group_by(bin, .drop = FALSE) %>% 
+  summarize(arr_count = n()) -> arrival_counts
+
+```
+
+The Poisson distribution has one parameter, $\lambda$, which is simply the arithmetic mean. Thus, the arrival times distribution function can easily be computed as follows to simulate the process.
+
+```{r simulate-arrival-rates}
+# simulate this process
+set.seed(1)
+n <- dim(arrival_counts)[1]
+lambda <- mean(arrival_counts$arr_count)
+simulated_distribution <- tibble(simulated_arr_count = rpois(n, lambda))
+
+arrival_counts_long <- arrival_counts %>% 
+  cbind(simulated_distribution) %>% 
+  tidyr::pivot_longer(cols = c(arr_count, simulated_arr_count), names_to = "type", values_to = "value")
+
+arrival_counts_long$type %<>% factor()
+levels(arrival_counts_long$type) <- list(empirical = "arr_count", simulated = "simulated_arr_count")
+```
+
+
+
+
+```{r}
+# plot generics
+y_max <- 10000
+rate_max <- 7
+
+arrival_counts_long %>% 
+  ggplot(aes(x = value, fill = type)) +
+  geom_bar(position = "dodge", alpha = 0.6, color = "transparent") +
+  ylim(c(0, y_max)) +
+  scale_x_continuous(trans = "reverse", breaks = seq(rate_max, 0, by = -1), limits = c(rate_max + 0.5, -0.5)) +
+  scale_fill_manual(values = c("empirical" = "black", "simulated" = "red")) +
+  labs(title = "Distribution of Arrival Rate per Minute",
+       x = "Arrival Rate",
+       y = "Count") +
+  coord_flip() +
+  theme_hn() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title = element_blank())
+```
+
+Plotting the simulated arrival rates against the empirical one shows that the process is very accurately modeled with the Poisson distribution. 
+
+
+
+
+
+```{r}
+
+
+data_raw %>% 
+  mutate(tick_10 = floor(tick / 10)) %>% 
+  mutate(topRank = as.numeric(topRank)) %>% 
+  group_by(tick_10, topRank, id) %>% 
+  summarize(count = n())
+
+
+sample_range <- max(data_raw$sample_time) - min(data_raw$sample_time)
+
+# das müsste auch in der Simulation rauskommen
+
+data_raw %>% 
+  select(id, topRank) %>% 
+  mutate(topRank = as.numeric(topRank)) %>%
+  filter(!is.na(topRank)) %>% 
+  distinct() %>% 
+  group_by(topRank) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>% 
+  mutate(count = sample_range / count) %>% 
+  ggplot(aes(x = topRank, y = count)) +
+  geom_point() +
+  geom_line() +
+  scale_y_log10()
+
+```
+
+
+```{r}
+
+data %>% 
+  mutate(rank_newpage = as.integer(rank_newpage)) %>% 
+  mutate(gained_votes = as.integer(gained_votes)) %>%  
+  replace_na(list(rank_toppage = 0)) %>% 
+  mutate(rank_toppage = as.integer(rank_toppage)) -> data_new
+
+
+data_new %>% 
+  select(gained_votes, rank_toppage, score) %>% 
+  # filter((rank_toppage == 0) & (gained_votes > 0)) %>%
+  group_by(rank_toppage, score) %>% 
+  summarize(gained_sum = sum(gained_votes, na.rm = TRUE),
+            gained_mean = mean(gained_votes, na.rm = TRUE),
+            gained_median = median(gained_votes, na.rm = TRUE),
+            count = n(), 
+            ) %>% 
+  ungroup() -> data_new
+
+# data_new %>% filter((rank_toppage == 0) & (gained != 0))
+
+```
+
+```{r}
+
+data_new$jitter <- runif(dim(data_new)[1], -0.5, 0.5)
+
+data_new %>%
+  filter(gained_sum > 0) %>% 
+  filter(rank_toppage > 0) %>% 
+  mutate(score_jittered = score + jitter) %>% 
+  mutate(gained_mean_log = log(gained_mean)) %>% 
+  ggplot(aes(x = score_jittered, y = rank_toppage, color = gained_mean_log)) +
+  geom_point() +
+  scale_color_viridis_c() +
+  scale_y_reverse() +
+  scale_x_log10()
+
+
+# social proof bias
+# -> muss bei Simulation (Voting behavior beachtet werden)
+
+```
+
+
+
+```{r}
+(
+  data_new %>% 
+    filter(rank_toppage < 60) %>% 
+    filter(count > 50) %>% 
+    mutate(gained_mean = log(gained_mean)) %>%
+    # replace_na(list(gained = 0)) %>%
+    mutate_all(function(x) ifelse(is.infinite(x), -7, x)) %>%
+    ggplot(aes(x = score, y = rank_toppage, fill = gained_mean)) +
+    geom_tile() +
+    labs(title = "Gained votes on new vs. top page",
+         x = "newpage rank",
+         y = "toppage rank",
+         fill = "gained votes") +
+    scale_y_reverse() +
+    coord_fixed() +
+    scale_fill_viridis_c() +
+    # scale_fill_gradient(low = "darkblue", high = "yellow") +
+    # scale_fill_gradientn(colours = c("darkblue", "red", "orange",  "yellow")) +
+    theme_hn() -> tile_plot
+)
+
+# ask und best etc. rausfiltern
+# Plot wie sich einzelne Storys entwickeln in diesem Raster
+# normalisieren
+
+```
+
+
+
+top rank vs. score

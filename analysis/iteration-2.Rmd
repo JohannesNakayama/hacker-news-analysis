@@ -17,6 +17,7 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE)
 library(dplyr)
 library(ggplot2)
 library(magrittr)
+library(tidyr)
 library(gganimate)
 source("helpers.R")
 
@@ -28,8 +29,6 @@ if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
 }
 
 ```
-
-
 
 
 
@@ -78,7 +77,7 @@ cutof_start <- lubridate::ceiling_date(sampling_start, "day")
 cutof_end <- lubridate::floor_date(sampling_end, "day")
 
 data %>% 
-  filter((samptime_datetime >= cutof_start) & (samptime_datetime <= cutof_end)) -> data_cropped
+  filter((subtime_datetime >= cutof_start) & (subtime_datetime <= cutof_end)) -> data_cropped
 
 ```
 
@@ -99,7 +98,7 @@ Posting activities seem to fluctuate in a regular pattern. The period for this f
 
 ```{r kde-posting-volume-datetime}
 
-data %>% 
+data_cropped %>% 
   ggplot(aes(x = subtime_datetime)) +
   geom_density(color = "black", fill = "black", alpha = 0.5, size = 1) +
   labs(title = "KDE of Posting Volume",
@@ -148,24 +147,26 @@ At 7 pm CET, it is 10 am PST. Going out on a limb, I would argue that the peak i
 The following analysis will clarify the substructure of this posting volume fluctuation. 
 
 ```{r format-data-for-fluctuation-analysis}
-data_cropped %>% 
-  mutate(subtime_date = lubridate::as_date(subtime_datetime),
-         subtime_hour = lubridate::hour(subtime_datetime)) %>% 
-  select(id, subtime_date, subtime_hour) %>% 
-  distinct() %>% 
-  group_by(subtime_date, subtime_hour) %>% 
-  summarize(count = n()) %>% 
-  ungroup() %>%
-  group_by(subtime_hour) %>% 
-  summarize(mean_count_per_hour = mean(count)) %>% 
-  ungroup() %>% 
-  mutate(mean_count_per_hour_standardized = (mean_count_per_hour - mean(mean_count_per_hour)) / sd(mean_count_per_hour),
-         subtime_hour_scaled = subtime_hour / 24) %>% 
-  select(subtime_hour, subtime_hour_scaled, mean_count_per_hour, mean_count_per_hour_standardized) -> data_posting_volume
-
 
 if (!("data-posting-volume.feather" %in% list.files(file.path("..", "data")))) {
+  data_cropped %>% 
+    mutate(subtime_date = lubridate::as_date(subtime_datetime),
+           subtime_hour = lubridate::hour(subtime_datetime)) %>% 
+    select(id, subtime_date, subtime_hour) %>% 
+    distinct() %>% 
+    group_by(subtime_date, subtime_hour) %>% 
+    summarize(count = n()) %>% 
+    ungroup() %>%
+    group_by(subtime_hour) %>% 
+    summarize(mean_count_per_hour = mean(count)) %>% 
+    ungroup() %>% 
+    mutate(mean_count_per_hour_standardized = (mean_count_per_hour - mean(mean_count_per_hour)) / sd(mean_count_per_hour),
+           subtime_hour_scaled = subtime_hour / 24) %>% 
+    select(subtime_hour, subtime_hour_scaled, mean_count_per_hour, mean_count_per_hour_standardized) -> data_posting_volume
+  
   arrow::write_feather(data_posting_volume, sink = file.path("..", "data", "data-posting-volume.feather"))
+} else {
+  data_posting_volume <- arrow::read_feather(file.path("..", "data", "data-posting-volume.feather"))
 }
 
 ```
@@ -228,7 +229,7 @@ data_posting_volume %>%
   theme_hn()
 ```
 
-This plot shows the data overlaid with the functions $-sin(2 \pi x)$ (blue) and $-1.5 sin(\beta x)$ (red). The parameter 1.5 was "hand-adjusted". Obviously, this should be done with a simple fitting algorithm, but this is a bit awkward in R, so I did it in Python (see below).
+This plot shows the data overlaid with the functions $-sin(2 \pi x)$ (blue) and $-1.5 sin(2 \pi x)$ (red). The parameter 1.5 was "hand-adjusted". Obviously, this should be done with a simple fitting algorithm, but this is a bit awkward in R, so I did it in Python (see below).
 
 [LINK TO JUPYTER OUTPUT]  
 
@@ -263,6 +264,9 @@ I think this is a satisfactory fit. One thing yet to determine though is how we 
 
 
 
+
+
+
 ### Arrival Rates as a Poisson Process
 
 
@@ -271,13 +275,30 @@ Another approach to get insight into the arrival rates of new stories on Hacker 
 
 First, we need to extract all the submission times and sort them chronologically.
 
+```{r}
+
+sampling_start <- min(data$samptime_datetime)
+sampling_end <- max(data$samptime_datetime)
+
+cutof_start <- lubridate::ceiling_date(sampling_start, "day")
+cutof_end <- lubridate::floor_date(sampling_end, "day")
+
+data %>% 
+  filter((subtime_datetime >= cutof_start) & (subtime_datetime <= cutof_end)) -> data_subtimes_cropped
+
+```
+
+
 ```{r format-data-for-submission-times}
 # get IDs and submission times and sort them by temporally
-data %>% 
+data_subtimes_cropped %>% 
   select(id, subtime_datetime) %>% 
   distinct() %>% 
   arrange(subtime_datetime) %>% 
-  select(subtime_datetime) -> sorted_submission_times
+  select(subtime_datetime) %>% 
+  mutate(subtime_clocktime = update(subtime_datetime, yday = 1)) -> sorted_submission_times
+
+sorted_submission_times 
 ```
 
 
@@ -296,12 +317,6 @@ tibble(subtime = sorted_submission_times$subtime_datetime,
 
 We are working with the following data.
 
-```{r}
-
-arrival_counts %>% 
-  knitr::kable()
-
-```
 
 
 The computed arrival counts per timeslice is the data that I assume to be Poisson distributed. The Poisson distribution has one parameter, $\lambda$, which is simply the arithmetic mean. Thus, the arrival times distribution function can easily be computed as follows to simulate the process.
@@ -311,54 +326,97 @@ The computed arrival counts per timeslice is the data that I assume to be Poisso
 set.seed(1)
 n <- dim(arrival_counts)[1]
 lambda <- mean(arrival_counts$arr_count)
-simulated_distribution <- tibble(arr_count = rpois(n, lambda))
-simulated_distribution %>% 
-  knitr::kable()
+simulated_distribution <- tibble(simulated_arr_count = rpois(n, lambda))
+
+arrival_counts_long <- arrival_counts %>% 
+  cbind(simulated_distribution) %>% 
+  tidyr::pivot_longer(cols = c(arr_count, simulated_arr_count), names_to = "type", values_to = "value")
+
+arrival_counts_long$type %<>% factor()
+levels(arrival_counts_long$type) <- list(empirical = "arr_count", simulated = "simulated_arr_count")
 ```
 
 
 This table displays simulated arrival rates. This is the simulated version of the prior table.
 
 
-```{r plot-submission-times-distributions}
+
+```{r}
 # plot generics
-y_max <- 7000
+y_max <- 10000
 rate_max <- 7
 
-# show real distribution of arrival times
-(p1 <- arrival_counts %>% 
-  ggplot(aes(x = arr_count)) +
-  geom_bar(color = "transparent", fill = "black", alpha = 0.8) +
+arrival_counts_long %>% 
+  ggplot(aes(x = value, fill = type)) +
+  geom_bar(position = "dodge", alpha = 0.6, color = "transparent") +
   ylim(c(0, y_max)) +
-  scale_x_continuous(breaks = seq(0, 7, by = 1), limits = c(-0.5, rate_max + 0.5)) +
-  labs(title = "Distribution of Arrival Rate per Minute (Empirical)",
+  scale_x_continuous(trans = "reverse", breaks = seq(rate_max, 0, by = -1), limits = c(rate_max + 0.5, -0.5)) +
+  scale_fill_manual(values = c("empirical" = "black", "simulated" = "red")) +
+  labs(title = "Distribution of Arrival Rate per Minute",
        x = "Arrival Rate",
        y = "Count") +
   coord_flip() +
   theme_hn() +
   theme(panel.grid.minor.x = element_blank(),
-        panel.grid.minor.y = element_blank()))
-
-
-# show simulated distribution of arrival times
-p2 <- simulated_distribution %>% 
-  ggplot(aes(x = arr_count)) +
-  geom_bar(color = "transparent", fill = "black", alpha = 0.8) +
-  ylim(c(0, y_max)) +
-  scale_x_continuous(breaks = seq(0, 7, by = 1), limits = c(-0.5, rate_max + 0.5)) +
-  labs(title = "Distribution of Arrival Rate per Minute (Simulated)",
-       x = "Arrival Rate",
-       y = "Count")  +
-  coord_flip() +
-  theme_hn() +
-  theme(panel.grid.minor.x = element_blank(),
-        panel.grid.minor.y = element_blank())
-
-ggpubr::ggarrange(p1, p2, ncol = 1)
-
+        panel.grid.minor.y = element_blank(),
+        legend.title = element_blank())
 ```
 
 Plotting the simulated arrival rates against the empirical one shows that the process is very accurately modeled with the Poisson distribution. 
+
+
+
+
+Lastly, we have to look how much $\lambda$ fluctuates during a day.
+
+```{r}
+
+arrival_counts %>% 
+  mutate(minute_of_day = as.numeric(bin) %% 1440) %>% 
+  group_by(minute_of_day) %>% 
+  summarize(mean_arr_count = mean(arr_count)) %>% 
+  ungroup() -> mean_arrival_count_per_minute
+
+mean_arrival_count_per_minute$mean_arr_count %>% sd()
+
+```
+
+
+```{r}
+
+simulated_arrivals <- arrow::read_feather(file.path("..", "data", "simulated_arrivals.feather"))
+
+simulated_arrivals %>% 
+  group_by(hour_of_day) %>% 
+  summarize(mean_arr_count = sum(arr_count)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = hour_of_day, y = mean_arr_count)) +
+  geom_point()
+
+
+simulated_arrivals %>% 
+  ggplot(aes(x = time_index, y = arr_count)) +
+  geom_point(alpha = 0.3)
+
+
+
+data_posting_volume %>% 
+  rename(hour_of_day = subtime_hour) %>% 
+  inner_join(simulated_arrivals %>% 
+               group_by(hour_of_day) %>%
+               summarize(sum_sim_arr_count = sum(arr_count)) %>%
+               ungroup(), 
+             by = "hour_of_day") %>% 
+  select(hour_of_day, mean_count_per_hour, sum_sim_arr_count) -> emp_vs_sim
+
+emp_vs_sim %>% 
+  tidyr::pivot_longer(cols = c(mean_count_per_hour, sum_sim_arr_count), names_to = "type", values_to = "value") %>% 
+  ggplot(aes(x = hour_of_day, y = value, color = type)) +
+  geom_point() +
+  scale_color_manual(values = viridis::cividis(2)) +
+  theme_hn()
+
+```
 
 
 
@@ -525,6 +583,8 @@ subcounts_real %>%
 First of all, let's look into how many votes are cast on the top page as opposed to not on the top page
 
 
+Plot how many votes on new vs top
+
 ```{r}
 # COPIED FROM BELOW
 data %>% 
@@ -566,6 +626,101 @@ gained_votes %>%
 
 
 
+den gleichen Plot für new ranks
+den gleichen Plot in 2D (new vs top)
+Top rank vs. Tageszeit
+-> idealerweise Tageszeit vs new vs top Verteilung
+
+
+
+```{r}
+
+data %>% 
+  mutate(rank_newpage = as.integer(rank_newpage)) %>% 
+  mutate(gained_votes = as.integer(gained_votes)) %>%  
+  replace_na(list(rank_toppage = 0)) %>% 
+  mutate(rank_toppage = as.integer(rank_toppage)) -> data_new
+
+
+data_new %>% 
+  select(gained_votes, rank_toppage, rank_newpage) %>% 
+  # filter((rank_toppage == 0) & (gained_votes > 0)) %>%
+  group_by(rank_toppage, rank_newpage) %>% 
+  summarize(gained_sum = sum(gained_votes, na.rm = TRUE),
+            gained_mean = mean(gained_votes, na.rm = TRUE),
+            gained_median = median(gained_votes, na.rm = TRUE),
+            count = n()) %>% 
+  ungroup() -> data_new
+
+# data_new %>% filter((rank_toppage == 0) & (gained != 0))
+
+```
+
+
+```{r}
+(
+  data_new %>% 
+    filter(rank_newpage < 100) %>% 
+    filter(rank_toppage < 60) %>% 
+    filter(count > 50) %>% 
+    mutate(gained_mean = log(gained_mean)) %>%
+    # replace_na(list(gained = 0)) %>%
+    mutate_all(function(x) ifelse(is.infinite(x), -7, x)) %>%
+    ggplot(aes(x = rank_newpage, y = rank_toppage, fill = gained_mean)) +
+    geom_tile() +
+    labs(title = "Gained votes on new vs. top page",
+         x = "newpage rank",
+         y = "toppage rank",
+         fill = "gained votes") +
+    scale_y_reverse() +
+    coord_fixed() +
+    scale_fill_viridis_c() +
+    # scale_fill_gradient(low = "darkblue", high = "yellow") +
+    # scale_fill_gradientn(colours = c("darkblue", "red", "orange",  "yellow")) +
+    theme_hn() -> tile_plot
+)
+
+# ask und best etc. rausfiltern
+# Plot wie sich einzelne Storys entwickeln in diesem Raster
+# normalisieren
+
+```
+
+```{r}
+
+data_new %>% 
+  filter(rank_newpage < 100) %>% 
+  filter(rank_toppage < 60) %>% 
+  ggplot(aes(x = rank_newpage, y = rank_toppage)) +
+  geom_raster(aes(fill = gained_votes))
+
+
+```
+
+
+
+
+```{r}
+rayshader::plot_gg(tile_plot, width = 7, height = 3, phi = 30, scale = 200, shadow_intensity = 0.2)
+rayshader::render_snapshot()
+
+```
+
+
+
+```{r}
+
+data %>% 
+  filter(rank_newpage < 200) %>% 
+  filter(rank_toppage < 50) %>% 
+  ggplot(aes(x = rank_newpage, y = rank_toppage, fill = gained_votes)) +
+  geom_hex(stat = "identity", binwidth)
+
+```
+
+
+
+
 ```{r}
 
 gained_votes %>% 
@@ -579,6 +734,38 @@ gained_votes %>%
 
 Erklärungsansätze: Warum auch auf hinteren Rängen noch Votes?
 * Zeitversatz?
+
+
+
+
+
+```{r}
+
+gained_votes %>% 
+  group_by(rank_newpage) %>% 
+  summarize(mean_gained_votes = mean(gained_votes)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = rank_newpage, y = mean_gained_votes)) +
+  geom_line()
+
+```
+
+
+gghighlight -> Outliers erklären
+max reached Variables markieren
+
+```{r}
+install.packages("gghighlight")
+```
+
+
+
+
+score / votes / penalties
+
+
+
+
 
 
 

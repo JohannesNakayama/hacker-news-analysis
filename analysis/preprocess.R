@@ -4,11 +4,11 @@ compute_score <- function(votes, age) {
   ((votes - 1) ^ 0.8) / ((age + 2) ^ 1.8)
 }
 
-data_raw <- read.table(file.path("..", "data", "newstories_2021-01-26_14-32-18.tsv"), sep = "\t", header = TRUE)
+data_raw <- read.table(file.path("..", "data", "newstories_2021-02-24_10-10-23.tsv"), sep = "\t", header = TRUE)
 
 # this is the main preprocessing procedure ----
 data_raw %>% 
-  rename(rank_toppage = rank) %>% 
+  rename(rank_toppage = topRank) %>% 
   mutate(rank_toppage = as.numeric(rank_toppage)) %>% 
   mutate(age_seconds = sample_time - submission_time) %>% 
   mutate(age_hours = age_seconds / 60 / 60) %>% 
@@ -20,13 +20,18 @@ data_raw %>%
          samptime_datetime_rounded = lubridate::round_date(samptime_datetime, "minute")) %>% 
   group_by(samptime_datetime_rounded) %>%
   arrange(desc(subtime_datetime)) %>% 
-  mutate(rank_newpage = row_number()) %>% 
+  rename(rank_newpage = newRank) %>% 
+  # mutate(rank_newpage = row_number()) %>% 
   ungroup() %>% 
   arrange(samptime_datetime_rounded) %>% 
   mutate(on_toppage = !is.na(rank_toppage)) %>% 
-  mutate(score_computed = compute_score(score, age_hours)) %>% 
-  select(-c(submission_time, sample_time)) %>% 
-  select(id, score, score_computed, rank_toppage, on_toppage, rank_newpage, descendants, age_seconds, age_hours,
+  mutate(score_computed = compute_score(score, age_hours)) %>%
+  group_by(id) %>% 
+  mutate(next_score = lead(score)) %>% 
+  ungroup() %>% 
+  mutate(gained_votes = next_score - score) %>%  
+  select(-c(submission_time, sample_time, next_score)) %>% 
+  select(id, score, score_computed, gained_votes, rank_toppage, on_toppage, rank_newpage, descendants, age_seconds, age_hours,
          subtime_datetime, subtime_datetime_rounded, subtime_clocktime, subtime_clocktime_rounded,
          samptime_datetime, samptime_datetime_rounded) -> data
 

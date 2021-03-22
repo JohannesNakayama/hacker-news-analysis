@@ -1,26 +1,36 @@
+using DataFrames
+using Feather
 using Distributions
 
-pdist = Poisson(0.68)
+# params
+LAMBDA = 0.6882627
+ALPHA = 1.3441739239406807
+SIGMA = 0.4203008
 
-samp = rand(pdist, 100)
-
-function daily_trend_bias(slice)
-    sin(-6.4 * slice)
+function bias_lambda(slice, alpha=ALPHA, sd=SIGMA)
+    sd * (- alpha * sin(2 * pi  * slice))
 end
 
+function draw_arrival_rate(slice, n, arrival_rate_mean=LAMBDA; alpha=ALPHA, arrival_rate_sd=SIGMA)
+    rel_slice = slice / n
+    lambda = arrival_rate_mean + bias_lambda(rel_slice, alpha, arrival_rate_sd)
+    dist = Poisson(lambda)
+    return rand(dist)
+end
+
+
+# one repetition simulation
 n = 1440
-λ = 0.68
-λ = 2
-arrivals_at_slice = [rand(Poisson(λ + (λ * daily_trend_bias(i)))) for i in 1:n] 
+average_day = [(i, draw_arrival_rate(i, n)) for i in 0:n-1]
+average_day_df = DataFrame(average_day)
+rename!(average_day_df, [1 => :time_index, 2 => :arr_count])
+average_day_df[:, :hour_of_day] = [i for i in 0:23 for j in 1:60]
+Feather.write(joinpath("data", "simulated_arrivals.feather"), average_day_df)
 
-using DataFrames
-
-simulated_data = DataFrame(
-    simulated_arrivals = arrivals_at_slice,
-    time_index = 1:length(arrivals_at_slice)
-)
-
-
-using Feather
-
-Feather.write(joinpath("data", "simulated_arrivals3.feather"), simulated_data)
+# bootstrap simulation (100 repititions)
+n = 1440
+average_day = [(i, mean([draw_arrival_rate(i, n) for j in 1:100])) for i in 0:n-1 ]
+average_day_df = DataFrame(average_day)
+rename!(average_day_df, [1 => :time_index, 2 => :arr_count])
+average_day_df[:, :hour_of_day] = [i for i in 0:23 for j in 1:60]
+Feather.write(joinpath("data", "simulated_arrivals.feather"), average_day_df)

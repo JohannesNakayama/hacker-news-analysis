@@ -41,3 +41,42 @@ if (!("hn-data-processed.rds" %in% list.files(file.path("..", "data")))) {
 ```
 
 
+# Old Empirical vs. Simulated Arrival Rates
+
+```{r plot-submission-times-distributions}
+# plot generics
+y_max <- 7000
+rate_max <- 7
+
+# show real distribution of arrival times
+(p1 <- arrival_counts %>% 
+  ggplot(aes(x = arr_count)) +
+  geom_bar(color = "transparent", fill = "black", alpha = 0.8) +
+  ylim(c(0, y_max)) +
+  scale_x_continuous(breaks = seq(0, 7, by = 1), limits = c(-0.5, rate_max + 0.5)) +
+  labs(title = "Distribution of Arrival Rate per Minute (Empirical)",
+       x = "Arrival Rate",
+       y = "Count") +
+  coord_flip() +
+  theme_hn() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()))
+
+
+# show simulated distribution of arrival times
+p2 <- simulated_distribution %>% 
+  ggplot(aes(x = simulated_arr_count)) +
+  geom_bar(color = "transparent", fill = "black", alpha = 0.8) +
+  ylim(c(0, y_max)) +
+  scale_x_continuous(breaks = seq(0, 7, by = 1), limits = c(-0.5, rate_max + 0.5)) +
+  labs(title = "Distribution of Arrival Rate per Minute (Simulated)",
+       x = "Arrival Rate",
+       y = "Count")  +
+  coord_flip() +
+  theme_hn() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+ggpubr::ggarrange(p1, p2, ncol = 1)
+
+```
